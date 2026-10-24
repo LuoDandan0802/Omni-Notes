@@ -21,11 +21,11 @@
 ## 🚀 四、 里程碑与进度记录
 
 ### 阶段一：寻找合适开源软件与环境搭建（第7周周末）
-*   **10月24日**：Fork 原仓库（原仓库地址为：https://github.com/federicoiosue/Omni-Notes ，
-    罗丹丹并建立开发分支，本地单元测试环境校验（**测试通过率 100%**，附测试截图）：
-    ![环境搭建与测试跑通](./images/env_test.png)
-    黄秀负责检验检查 gradle.properties 中的 COMPILE_SDK=36，确认 SDK Manager 中已安装对应版本。
-*   **10月25日**：。
+* **10月24日**：Fork 原仓库（原仓库地址为：https://github.com/federicoiosue/Omni-Notes ，
+  罗丹丹并建立开发分支，本地单元测试环境校验（**测试通过率 100%**，附测试截图）:
+  ![环境校验截图](env_test.png)
+黄秀负责检验检查 gradle.properties 中的 COMPILE_SDK=36，确认 SDK Manager 中已安装对应版本。
+*   **10月25日**：
 
 ### 阶段二：结对泛读与架构摸底（第8周） - ⏳ 进行中
 *   预期目标：结对泛读 8800 行源码，绘制软件整体体系结构图，完成泛读与质量分析初稿。
