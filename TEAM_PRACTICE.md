@@ -37,7 +37,7 @@
    * 罗丹丹：对it.feio.android.omninotes软件包进行大致泛读，分析了解了async包、db包、helpers包、models包、utils包各自的作用以及各个包内的各个类之间的关系。
 *  **10月27日**：
    * 黄秀：
-   * 罗丹丹：
+   * 罗丹丹：和黄秀合绘Omni-Notes开源软件包图，了解feio.android.omninotes软件包剩下的类之间的关系。
 *  **10月28日**：
    * 黄秀：
    * 罗丹丹：
