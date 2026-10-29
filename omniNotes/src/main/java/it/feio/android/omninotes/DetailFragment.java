@@ -15,13 +15,19 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 package it.feio.android.omninotes;
+/**
+ * import static ...(静态导入）：是直接把某个类里的“常量”或者“静态方法”拿过来用
+ * android.或androidx.开头的导入，这是Google专门为Android系统开发的SDK类库
+ */
 
-import static android.Manifest.permission.CAMERA;
 import static android.content.Context.CLIPBOARD_SERVICE;
 import static android.content.Context.LAYOUT_INFLATER_SERVICE;
 import static android.content.pm.PackageManager.FEATURE_CAMERA;
 import static android.widget.Toast.LENGTH_SHORT;
 import static androidx.core.view.ViewCompat.animate;
+/**
+ * 以包名开头的，这是导入的项目内部的类的静态“常量”或者“静态方法”
+ */
 import static it.feio.android.omninotes.BaseActivity.TRANSITION_HORIZONTAL;
 import static it.feio.android.omninotes.BaseActivity.TRANSITION_VERTICAL;
 import static it.feio.android.omninotes.MainActivity.FRAGMENT_DETAIL_TAG;
@@ -64,8 +70,11 @@ import static it.feio.android.omninotes.utils.ConstantsBase.PREF_WIDGET_PREFIX;
 import static it.feio.android.omninotes.utils.ConstantsBase.SWIPE_MARGIN;
 import static it.feio.android.omninotes.utils.ConstantsBase.SWIPE_OFFSET;
 import static it.feio.android.omninotes.utils.ConstantsBase.THUMBNAIL_SIZE;
-import static java.lang.Integer.parseInt;
-import static java.lang.Long.parseLong;
+/**
+ * 导入的是纯粹的java语言基础包，是java语言自带的。
+ */
+import static java.lang.Integer.parseInt;//将字符串转换为int基本数据类型的静态方法
+import static java.lang.Long.parseLong; //将字符串转换为 long 基本数据类型的静态方法
 
 import android.Manifest;
 import android.annotation.SuppressLint;
@@ -203,12 +212,26 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   private static final int CATEGORY = 5;
   private static final int DETAIL = 6;
   private static final int FILES = 7;
-
+  /**
+   * @description 声明 Fragment 界面的视图绑定对象（ViewBinding）。
+   * @why 用于替代传统的 findViewById()。在 onCreateView 中被实例化后，它就像一个“遥控器”，
+   * 在这个项目里，布局文件叫 fragment_detail.xml，Android Studio 在编译时，会自动根据这个文件名生成一个叫 FragmentDetailBinding 的类。
+   * 这就是为什么你从来没写过这个类，却能直接使用它的原因。
+   * 这样既省去了繁琐的强转代码，又在编译期避免了因控件 ID 写错导致的空指针闪退，提升了开发效率和安全性
+   */
   private FragmentDetailBinding binding;
 
   boolean goBack = false;
   private ExpandableHeightGridView mGridView;
+  /**
+   * @description 声明用于切换普通文本与待办清单的视图对象，Android 系统（SDK）自带的
+   * @why 记录当前输入框的实例，当用户在文本和待办列表之间切换时，需要对其重新渲染。
+   */
   private View toggleChecklistView;
+  /**
+   * @description 声明当前附件的统一资源标识符（Uri）。Android 系统（SDK）自带的
+   * @why 当用户调用相机拍照或录音时，需要暂时保存文件路径，以便结果返回时读取该路径。
+   */
   private Uri attachmentUri;
   private AttachmentAdapter mAttachmentAdapter;
   private MaterialDialog attachmentDialog;
@@ -220,11 +243,32 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   private MediaRecorder mRecorder = null;
   private MediaPlayer mPlayer = null;
   private boolean isRecording = false;
+
   private View isPlayingView = null;
+  /**
+   * @description 声明一个用于保存图片的 Bitmap（位图）对象。
+   * @why Bitmap 是 Android 底层专门用来装“图像像素”的类（相当于一张底片）。
+   * 因为当用户点击播放录音时，界面上的“播放图标”会被临时替换成“停止图标”。
+   * 如果不提前用这个变量把原来的“播放图标”存下来，播放结束后，界面就不知道怎么把图标变回原样了。
+   * 所以它就像个临时相册，专门用来存一下一会儿要复原的图标。
+   */
   private Bitmap recordingBitmap;
+  /**
+   * @description 声明待办清单管理器（第三方库的对象）。
+   * @why 因为 Android 原生的输入框只能打纯文字，无法生成带复选框的清单。
+   * 这个“大管家”负责接管普通的文本框，把文字变成可以打钩的待办事项（Checklist）。
+   * 当用户在“纯文本”和“清单”模式间来回切换时，它还能记住勾选状态，防止数据丢失。
+   */
   private ChecklistManager mChecklistManager;
   // Values to print result
   private String exitMessage;
+  /**
+   * @description 声明退出提示框的 UI 样式（Style），默认使用确认（绿色）样式。
+   * Style 就是第三方库Crouton专门用来定义提示框长啥样的类
+   * @why 用户退出版面时，系统需要弹出一个提示条（Crouton）。这行代码相当于准备了一件“绿色的成功皮肤”。
+   * 后面真正弹窗时，如果保存出错，代码会把这件衣服换成红色的警告皮肤。
+   * 单独抽离出一个变量，是为了能在不同场景下动态切换颜色，让用户体验更好。
+   */
   private Style exitCroutonStyle = ONStyle.CONFIRM;
   // Flag to check if after editing it will return to ListActivity or not
   // and in the last case a Toast will be shown instead than Crouton
@@ -242,34 +286,48 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   private ArrayList<String> mergedNotesIds;
   private MainActivity mainActivity;
   private boolean activityPausing;
-
+  /**
+   * @description 定义一个文本超链接点击监听器。
+   * @why 因为便签内容可能包含网址或电话号码，为了提升用户体验，当用户点击这些链接时，不应该直接跳走，而是先弹出一个对话框，让用户选择“打开”还是“复制”。
+   */
   TextLinkClickListener textLinkClickListener = (view, clickedString, url) -> {
-      new MaterialDialog.Builder(mainActivity)
+    // 弹出一个 MaterialDialog（第三方库），显示用户点击的文字
+         new MaterialDialog.Builder(mainActivity)
           .content(clickedString)
           .negativeColorRes(R.color.colorPrimary)
-          .positiveText(R.string.open)
-          .negativeText(R.string.copy)
+          .positiveText(R.string.open) // 设置“打开”按钮
+          .negativeText(R.string.copy)  // 设置“复制”按钮
+         // 如果用户点击了“打开”
           .onPositive((dialog, which) -> {
             try {
+              // 调用工具类，根据 url 生成一个意图（Intent），看看能不能跳转到浏览器或拨号盘
               Intent intent = TagOpenerHelper.openOrGetIntent(getContext(), url);
               if (intent != null) {
+                // 如果能跳转，就让主界面去执行跳转
                 mainActivity.initNotesList(intent);
               }
             } catch (UnhandledIntentException e) {
+              // 如果手机里没有能处理这个链接的 App（比如没装浏览器），弹个红色的警告
               mainActivity.showMessage(R.string.no_application_can_perform_this_action,
                   ONStyle.ALERT);
             }
           })
+         // 如果用户点击了“复制”
           .onNegative((dialog, which) -> {
+            // 获取 Android 系统的剪贴板服务
             android.content.ClipboardManager clipboard = (android.content.ClipboardManager)
                 mainActivity.getSystemService(CLIPBOARD_SERVICE);
+            // 把点击的文字打包成纯文本
             android.content.ClipData clip = android.content.ClipData.newPlainText("text label",
                 clickedString);
             clipboard.setPrimaryClip(clip);
-          }).build().show();
+          }).build().show(); // 显示弹窗
+    // 判断当前是不是待办清单模式，如果是，焦点在清单视图上；如果不是，焦点在普通内容视图上
       View clickedView =
           Boolean.TRUE.equals(noteTmp.isChecklist()) ? toggleChecklistView : binding.contentWrapper;
+    // 让输入框失去焦点（光标不闪了）
       clickedView.clearFocus();
+    //下面是两次隐藏软键盘，因为有可能一次关不掉
       KeyboardUtils.hideKeyboard(clickedView);
       new Handler().post(() -> {
         View clickedView1 = Boolean.TRUE.equals(noteTmp.isChecklist()) ? toggleChecklistView : binding.contentWrapper;
@@ -1570,6 +1628,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       goBack = true;
       saveNote();
     }
+
   }
 
   /**
