@@ -69,18 +69,27 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
 
-
+/**
+*数据库帮助类，管理笔记、附件、分类三张表的创建、升级与全部读写操作。
+* @why 继承SQLiteOpenHelper，由Android框架管理数据库的版本变迁和连接生命周期，
+*       避免在每个使用数据库的类中重复编写打开/建表逻辑。
+ */
 public class DbHelper extends SQLiteOpenHelper {
 
-  // Database name
-  // Database version aligned if possible to software version
+  // Database name（数据库名称）
+  // Database version aligned if possible to software version（数据库版本尽可能与软件版本保持一致）
+  //数据库版本号，与App版本同步维护；每次升级递增，触发onUpgrade执行对应脚本
   private static final int DATABASE_VERSION = 625;
-  // Sql query file directory
+  // Sql query file directory（Sql查询文件目录）
+  // 建表 SQL 脚本所在目录（相对 assets 根）
   private static final String SQL_DIR = "sql";
 
-  // Notes table name
+  //----------notes笔记表：表名与全部列名常量----------
+  //列名集中为常量，避免SQL字符串中拼写错误；KEY_ID与KEY_CREATION均指向“creation”
+  // Notes table name（笔记表名称）
   public static final String TABLE_NOTES = "notes";
-  // Notes table columns
+  // Notes table columns（笔记表列）
+  // 主键即创建时间戳：便签无需自增 id，直接用毫秒时间戳保证唯一且天然有序
   public static final String KEY_ID = "creation";
   public static final String KEY_CREATION = "creation";
   public static final String KEY_LAST_MODIFICATION = "last_modification";
@@ -88,36 +97,42 @@ public class DbHelper extends SQLiteOpenHelper {
   public static final String KEY_CONTENT = "content";
   public static final String KEY_ARCHIVED = "archived";
   public static final String KEY_TRASHED = "trashed";
+  // 提醒时间列（列名 alarm，与业务含义"提醒"对应）
   public static final String KEY_REMINDER = "alarm";
   public static final String KEY_REMINDER_FIRED = "reminder_fired";
   public static final String KEY_RECURRENCE_RULE = "recurrence_rule";
   public static final String KEY_LATITUDE = "latitude";
   public static final String KEY_LONGITUDE = "longitude";
   public static final String KEY_ADDRESS = "address";
+  // 分类外键，关联 categories 表
   public static final String KEY_CATEGORY = "category_id";
   public static final String KEY_LOCKED = "locked";
   public static final String KEY_CHECKLIST = "checklist";
 
-  // Attachments table name
+  //----------attachments附件表：一篇笔记可关联多个附件，通过note_id外键关联notes表----------
+  // Attachments table name（附件表名）
   public static final String TABLE_ATTACHMENTS = "attachments";
-  // Attachments table columns
+  // Attachments table columns（附件表列）
   public static final String KEY_ATTACHMENT_ID = "attachment_id";
   public static final String KEY_ATTACHMENT_URI = "uri";
   public static final String KEY_ATTACHMENT_NAME = "name";
   public static final String KEY_ATTACHMENT_SIZE = "size";
   public static final String KEY_ATTACHMENT_LENGTH = "length";
   public static final String KEY_ATTACHMENT_MIME_TYPE = "mime_type";
+  // 外键：所属便签 id，关联 notes 表主键（creation）
   public static final String KEY_ATTACHMENT_NOTE_ID = "note_id";
 
-  // Categories table name
+  //----------categories分类表；笔记通过category_id关联分类----------
+  // Categories table name（分类表名）
   public static final String TABLE_CATEGORY = "categories";
-  // Categories table columns
+  // Categories table columns（分类表列)
   public static final String KEY_CATEGORY_ID = "category_id";
   public static final String KEY_CATEGORY_NAME = "name";
   public static final String KEY_CATEGORY_DESCRIPTION = "description";
   public static final String KEY_CATEGORY_COLOR = "color";
 
-  // Queries
+  // Queries（查询）
+  //建库脚本文件名create.sql；升级脚本按upgrade-<版本号>.sql组织，存放于assets/sql目录
   private static final String CREATE_QUERY = "create.sql";
   private static final String UPGRADE_QUERY_PREFIX = "upgrade-";
   private static final String UPGRADE_QUERY_SUFFIX = ".sql";
@@ -128,22 +143,34 @@ public class DbHelper extends SQLiteOpenHelper {
   private static DbHelper instance = null;
   private SQLiteDatabase db;
 
-
+  /**
+   * 获取全局唯一的DbHelper实例（懒加载单例）。
+   * @why 使用App全局Context，避免持有Activity引用导致内存泄漏。
+   */
   public static synchronized DbHelper getInstance() {
+    // App 全局 Context，生命周期与进程一致
     return getInstance(OmniNotes.getAppContext());
   }
 
-
+  /**
+   *获取单例；传入外部Context时仅在首次创建时使用。
+   * @why 首次创建需要Context才能定位数据库文件路径，之后复用已创建的实例。
+   */
   public static synchronized DbHelper getInstance(Context context) {
+    // 懒加载：首次调用才创建实例
     if (instance == null) {
       instance = new DbHelper(context);
     }
     return instance;
   }
 
-
+  /**
+   *私有构造函数，禁止外部直接new，保证单例唯一性。
+   * @why 通过super传入数据库名与版本号，SQLiteOpenHelper据此管理建库与升级回调。
+   */
   public static synchronized DbHelper getInstance(boolean forcedNewInstance) {
     if (instance == null || forcedNewInstance) {
+      // 复用旧实例的 Context，避免重复持有 Activity 引用
       Context context = (instance == null || instance.mContext == null) ? OmniNotes.getAppContext()
           : instance.mContext;
       instance = new DbHelper(context);
@@ -152,51 +179,91 @@ public class DbHelper extends SQLiteOpenHelper {
   }
 
 
+  /**
+   * 私有构造，禁止外部 new，保证单例唯一。
+   * @why 传入库名与版本号，SQLiteOpenHelper 据此判定是否触发 onCreate/onUpgrade。
+   */
   private DbHelper(Context mContext) {
+    // 版本号与现有库不匹配时框架会自动调用 onCreate/onUpgrade
     super(mContext, DATABASE_NAME, null, DATABASE_VERSION);
     this.mContext = mContext;
   }
 
 
+  /**
+   * 返回数据库文件名。
+   * @why 供备份/恢复模块（BackupHelper）定位磁盘上的实际库文件。
+   */
   public String getDatabaseName() {
     return DATABASE_NAME;
   }
 
+  /**
+   * 获取数据库连接（默认只读优先）。
+   * @why 只读连接避免误触发写锁，提高并发查询可能性。
+   */
   public SQLiteDatabase getDatabase() {
     return getDatabase(false);
   }
 
+  /**
+   * 获取数据库连接，可强制获取可写链接。
+   * @why 写入操作（增删改）必须使用可写连接；IllegalStateException时回退到已缓存连接，保证异常场景可用。
+   */
   public SQLiteDatabase getDatabase(boolean forceWritable) {
     try {
+      // 写操作取可写连接，读操作取只读连接
       return forceWritable ? getWritableDatabase() : getReadableDatabase();
     } catch (IllegalStateException e) {
+      // 库未就绪时回退已缓存连接，避免抛异常导致界面崩溃
       return this.db;
     }
   }
 
+  /**
+   * 数据库每次打开时回调；关闭WAL（预写日志）模式。
+   * @why WAL下多个连接同时读写会引发database is locked 异常，关闭后以传统回滚日志模式
+   * 运行，规避笔法冲突。
+   */
   @Override
   public void onOpen(SQLiteDatabase db) {
+    // 禁用 WAL，规避多线程读写锁冲突
     db.disableWriteAheadLogging();
     super.onOpen(db);
   }
 
+  /**
+   * 首次创建数据库时回调，执行assets/sql/create.sql中的建表脚本。
+   * @why 将建表SQL独立存放于assets文件而非硬编码在Java代码中：
+   *       ①长SQL在Java字符串中需要处理大量转义与拼接，可读性差；
+   *       ②建表脚本随版本统一管理，便于后续升级脚本复用相同表结构；
+   *       ③修改表结构只需改SQL文件，无需重新编译代码。
+   */
   @Override
   public void onCreate(SQLiteDatabase db) {
     try {
       LogDelegate.i("Database creation");
+      // 执行 create.sql：创建 notes/attachments/categories 三张表
       execSqlFile(CREATE_QUERY, db);
     } catch (IOException e) {
+      // 建表脚本缺失属致命错误，包装为业务异常快速失败
       throw new DatabaseException("Database creation failed: " + e.getMessage(), e);
     }
   }
 
 
+  /**
+   * 数据库版本升级时回调，按版本差依次执行assets/sql下的upgrade-N.sql脚本。
+   * @why 用户升级App后旧数据库需增量迁移（如新增列、新建表），
+   *       通过旧版本号定位升级起点，逐个执行脚本数据不丢失。
+   */
   @Override
   public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-    this.db = db;
+    this.db = db; // 暂存连接供升级流程内部使用
     LogDelegate.i("Upgrading database version from " + oldVersion + " to " + newVersion);
 
     try {
+      // 核心：按版本区间逐一执行升级脚本，完成增量迁移
       UpgradeProcessor.process(oldVersion, newVersion);
 
       for (String sqlFile : AssetUtils.list(SQL_DIR, mContext.getAssets())) {
