@@ -285,7 +285,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   private int contentCursorPosition;
   private ArrayList<String> mergedNotesIds;
   private MainActivity mainActivity;
-  private boolean activityPausing;
+  private boolean activityPausing;//定义的这个变量类似于“营业状态牌”，当用户暂时离开这个页面时会改为true
   /**
    * @description 定义一个文本超链接点击监听器。
    * @why 因为便签内容可能包含网址或电话号码，为了提升用户体验，当用户点击这些链接时，不应该直接跳走，而是先弹出一个对话框，让用户选择“打开”还是“复制”。
@@ -334,43 +334,68 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
         KeyboardUtils.hideKeyboard(clickedView1);
       });
   };
-
+  /**
+   * @description Fragment 生命周期初始化回调方法。
+   * @why
+   * 1. 调用 super.onCreate()：让父类先行完成底层的初始化与状态恢复，防止程序崩溃。
+   * 2. 解析 savedInstanceState 包裹：这是一个 Bundle 对象（相当于系统给的“数据快递盒”）。如果用户正在打字时突然把手机横过来（屏幕旋转），界面会被销毁重建。系统会把之前的数据装进这个 Bundle 盒子里传回来，开发者可以通过它把用户没写完的字恢复出来。如果是首次打开，这个盒子就是空的（null）。
+   * 3. 保存自身引用：将 this 赋值给 mFragment，为了后续在内部类和回调方法中能随时找到当前页面的实例，避免空指针异常。
+   */
   @Override
   public void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     mFragment = this;
   }
-
+  /**
+   *onAttach 是Fragment 生命周期方法,在 Fragment 刚刚被绑定到它的宿主 Activity 上时 调用的
+   * 使用 EventBus 发布（post）了一个 SwitchFragmentEvent 事件。
+   * 这里传入的 CHILDREN 参数并不是固定的，它只是一个“方向标记”。它相当于对全App广播：“当前页面正进入子页面（详情页）”。
+   * 接收到这个事件的其他组件（如侧边栏）会根据这个标记，自动把界面的导航图标变成“返回箭头”。这种机制彻底解耦了界面之间的直接依赖。
+   */
   @Override
   public void onAttach(Context context) {
     super.onAttach(context);
     EventBus.getDefault().post(new SwitchFragmentEvent(SwitchFragmentEvent.Direction.CHILDREN));
   }
-
+  /**
+   * @description Fragment 生命周期回调：当页面回到前台且可见时调用。
+   * @why
+   * 1. 重置暂停标记：activityPausing 置为 false。因为用户可能从其他应用或网页切换回来，必须重置该状态，告诉后台异步任务“现在页面在前台，可以安全刷新 UI 了”，避免数据不更新。
+   * 2. 重新注册事件总线：生命周期是循环的。因为离开页面时（onPause）注销了 EventBus，所以回到前台时必须重新 register(this) 恢复监听，确保能接收到全局广播事件。
+   */
   @Override
   public void onResume() {
     super.onResume();
     activityPausing = false;
     EventBus.getDefault().register(this);
   }
-
+  /**
+   * @description Fragment 生命周期回调：负责将 XML 布局渲染为真实的 UI 视图，并交给系统显示。
+   * @why
+   * 1. 参数解析：LayoutInflater 相当于系统的“施工队”，负责将 fragment_detail.xml 这个静态的“图纸”解析并实例化为真实的控件对象；container 是父容器；savedInstanceState 恢复记忆如果屏幕旋转，界面重造，系统就会恢复状态。
+   * 2. inflate 魔法：FragmentDetailBinding 是编译期由 XML 自动生成的类，它内部调用了 SDK 的 inflate 方法将界面“建”出来，并自动把所有控件的引用打包成一个名为 binding 的“遥控器”。第三个参数传 false，是为了防止视图被提前强制挂载。
+   * 3. 返回根视图：通过 binding.getRoot() 拿到整个界面的最外层视图，返回给系统，界面最终才呈现在屏幕上。
+   */
   @Override
   public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
     binding = FragmentDetailBinding.inflate(inflater, container, false);
     return binding.getRoot();
   }
-
+  /**
+   * @description Fragment 生命周期回调：在宿主 Activity 创建完成、Fragment 视图已渲染后调用。
+   * @why 这是页面初始化的“黄金节点”。此时 Activity 已经完全就绪，本方法负责将 Fragment 与 Activity 绑定，接管顶部导航栏的 UI 控制，恢复因屏幕旋转丢失的数据，并最终触发核心业务逻辑（init）来渲染便签内容。
+   */
   @Override
   public void onActivityCreated(Bundle savedInstanceState) {
     super.onActivityCreated(savedInstanceState);
 
-    mainActivity = (MainActivity) getActivity();
+    mainActivity = (MainActivity) getActivity(); //核心动作！ 拿到宿主 Activity 的实例。因为 Fragment 只是一个“碎片”，它不能自己弹窗、不能自己设置顶部导航栏，必须通过 mainActivity 这个“大老板”来发号施令。
 
-    mainActivity.getSupportActionBar().setDisplayShowTitleEnabled(false);
-    mainActivity.getToolbar().setNavigationOnClickListener(v -> navigateUp());
+    mainActivity.getSupportActionBar().setDisplayShowTitleEnabled(false);//：把顶部导航栏的标题给隐藏掉。因为便签详情页有自己专属的标题栏，不需要系统默认的。
+    mainActivity.getToolbar().setNavigationOnClickListener(v -> navigateUp());//给左上角的返回按钮（或者三条杠）绑定点击事件
 
     // Force the navigation drawer to stay opened if tablet mode is on, otherwise has to stay closed
-    if (NavigationDrawerFragment.isDoublePanelActive()) {
+    if (NavigationDrawerFragment.isDoublePanelActive()) {//这里判断的是左边是否显示菜单栏，在isDoublePanelActive()会返回boolean值
       mainActivity.getDrawerLayout().setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_OPEN);
     } else {
       mainActivity.getDrawerLayout().setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
@@ -387,20 +412,32 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     setHasOptionsMenu(true);
     setRetainInstance(false);
   }
-
+  /**
+   * @description 检查并处理从“草图编辑页面”返回后产生的草图附件。
+   * @why
+   * 1. 跨页面数据中转：画图页面会将图片路径暂存在 MainActivity 中。此方法通过 getSketchUri 判断是否有新草图。
+   * 2. 阅后即焚防重复：一旦处理完毕，立刻调用 setSketchUri(null) 清空暂存路径，防止用户切换其他便签时被重复添加。
+   * 3. 替换旧图：如果是编辑旧的草图，在添加了新图之后，必须把原来的旧图从附件列表移除，避免同一个附件出现两份。
+   */
   private void addSketchedImageIfPresent() {
     if (mainActivity.getSketchUri() != null) {
-      Attachment mAttachment = new Attachment(mainActivity.getSketchUri(), MIME_TYPE_SKETCH);
-      addAttachment(mAttachment);
-      mainActivity.setSketchUri(null);
+      Attachment mAttachment = new Attachment(mainActivity.getSketchUri(), MIME_TYPE_SKETCH);//// 将路径封装成附件对象，并标记为草图类型
+      addAttachment(mAttachment);// // 添加到当前便签的附件列表中
+      mainActivity.setSketchUri(null); //把 MainActivity 里的这个路径清空。
       // Removes previous version of edited image
+      // 如果这是对旧草图的编辑，需要把旧的附件移除，用新的替换
       if (sketchEdited != null) {
         noteTmp.getAttachmentsList().remove(sketchEdited);
         sketchEdited = null;
       }
     }
   }
-
+  /**
+   * @description 屏幕旋转（或界面重建）后，从系统包裹（Bundle）中恢复临时便签数据。
+   * @why
+   * 1. 作用：当屏幕横竖屏切换时，Activity 和 Fragment 会被销毁重建。系统会将销毁前的数据存入 savedInstanceState 中。此方法负责把 noteTmp（用户正在编辑的数据）等关键变量取出来，重新赋值给全局变量。
+   * 2. 界面恢复逻辑：这里只负责把“数据”准备好。紧接着外部会调用 init() -> initViews()，那些方法会读取恢复好的变量（如 noteTmp），并通过 setText() 将内容重新渲染到界面上。
+   */
   private void restoreTempNoteAfterOrientationChange(Bundle savedInstanceState) {
     if (savedInstanceState != null) {
       noteTmp = savedInstanceState.getParcelable("noteTmp");
@@ -410,7 +447,10 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       orientationChanged = savedInstanceState.getBoolean("orientationChanged");
     }
   }
-
+  /**
+   * @description Fragment 生命周期回调：在界面即将因屏幕旋转或系统内存不足被销毁前，紧急保存状态。
+   * @why 为了绝不让用户刚才打了一半的字丢失。本方法会将界面上未保存的文本抓取到草稿对象中，连同多个便签实例一起打包进 Bundle 包裹。这样在界面重建时，就能通过 savedInstanceState 恢复如初。
+   */
   @Override
   public void onSaveInstanceState(Bundle outState) {
     if (noteTmp != null) {
@@ -424,7 +464,15 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     }
     super.onSaveInstanceState(outState);
   }
-
+  /**
+   * Fragment生命周期回调：页面即将失去焦点、切换后台、被遮挡时执行
+   * 核心职责：释放事件总线监听防止内存泄漏、标记页面暂停状态、自动保存便签、收起键盘
+   * 1. 注销EventBus：和onResume的register成对，避免Fragment引用无法释放造成内存泄漏
+   * 2. activityPausing置为true：通知后台异步任务，当前页面不可见，禁止更新UI
+   * 3. 保存判断：goBack标记区分场景，非返回退出页面时自动保存便签，防止重复保存
+   * 4. 收起键盘：页面离开时隐藏软键盘、清除控件焦点，优化交互体验
+   */
+  @Override
   @Override
   public void onPause() {
     super.onPause();
@@ -444,22 +492,29 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       binding.contentWrapper.clearFocus();
     }
   }
-
+/**
+        * 设备配置发生变更时回调，这里专门监听屏幕横竖屏切换
+ * 当新旧方向不一致时，标记 orientationChanged = true，用来告知后续逻辑：发生了屏幕旋转，需要做数据恢复处理
+ */
   @Override
   public void onConfigurationChanged(Configuration newConfig) {
     super.onConfigurationChanged(newConfig);
-    if (getResources().getConfiguration().orientation != newConfig.orientation) {
+    if (getResources().getConfiguration().orientation != newConfig.orientation) { //判断屏幕方向是否发生变化，若横竖屏切换，则置标记位，用于后续识别旋转事件、恢复临时便签数据
       orientationChanged = true;
     }
   }
-
+  /**
+   * @description 详情页的核心初始化调度方法。
+   * @why 这是页面加载的必经之路。它遵循“先解析外部意图 -> 再准备三份便签数据（原件/当前/草稿） -> 最后进行安全校验”的严密流程。
+   * 只有通过了密码验证，才允许调用 initViews() 渲染界面，从而确保数据加载的安全性和视图渲染的准确性。
+   */
   private void init() {
 
     // Handling of Intent actions
     handleIntents();
 
     if (noteOriginal == null) {
-      noteOriginal = getArguments().getParcelable(INTENT_NOTE);
+      noteOriginal = getArguments().getParcelable(INTENT_NOTE); //getArguments() 的作用，就是去取那个装着数据的快递包裹，Parcelable 是 Android 专门用来传递对象的接口
     }
 
     if (note == null) {
@@ -470,7 +525,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       noteTmp = new Note(note);
     }
 
-    if (Boolean.TRUE.equals(noteTmp.isLocked()) && !noteTmp.isPasswordChecked()) {
+    if (Boolean.TRUE.equals(noteTmp.isLocked()) && !noteTmp.isPasswordChecked()) { //保护用户隐私。如果便签被加密了，必须先拦截渲染流程，弹出密码输入框。
       checkNoteLock(noteTmp);
       return;
     }
@@ -481,12 +536,16 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   /**
    * Checks note lock and password before showing note content
    */
+  /**
+   * @description 检查便签的锁定状态，并进行密码拦截验证。
+   * @why 为了保护用户隐私，在渲染私密便签内容前必须进行安全校验。本方法会判断便签是否加锁、系统是否设置了密码，并弹出密码输入框；只有验证通过，才会继续执行 init() 渲染界面。
+   */
   private void checkNoteLock(Note note) {
     // If note is locked security password will be requested
     if (Boolean.TRUE.equals(note.isLocked()
         && Prefs.getString(PREF_PASSWORD, null) != null)
-        && !Prefs.getBoolean("settings_password_access", false)) {
-      PasswordHelper.requestPassword(mainActivity, passwordConfirmed -> {
+        && !Prefs.getBoolean("settings_password_access", false)) { //“便签被锁” 且 “确实有密码” 且 “没开启免密”
+      PasswordHelper.requestPassword(mainActivity, passwordConfirmed -> { //  // 请求密码验证。这是一个典型的“回调（Callback）”写法。
         switch (passwordConfirmed) {
           case SUCCEED:
             noteTmp.setPasswordChecked(true);
@@ -504,7 +563,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
         }
       });
     } else {
-      noteTmp.setPasswordChecked(true);
+      noteTmp.setPasswordChecked(true);//如果没有上锁，直接标记为“已通过验证”，并执行初始化显示界面
       init();
     }
   }

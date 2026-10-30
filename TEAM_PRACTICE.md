@@ -45,7 +45,7 @@
    * 黄秀：完成了DetailFragment.java 1-200行代码的精读，其中主代码大约100行，熟悉成员变量和textLinkClickListener 变量定义及内部的方法
    * 罗丹丹：
 *  **10月30日**：
-   * 黄秀：
+   * 黄秀：完成了 DetailFragment.java 第 200-450 行代码的精读，梳理了 Fragment 核心生命周期方法
    * 罗丹丹：
 *  **10月31日**：
    * 黄秀：
