@@ -528,30 +528,36 @@ public class DbHelper extends SQLiteOpenHelper {
    * @return 匹配的便签列表
    */
   public List<Note> getNotes(String whereCondition, boolean order) {
+    //结果列表容器
     List<Note> noteList = new ArrayList<>();
 
+    //排序列与排序方向，根据导航状态和用户偏好动态确定
     String sortColumn = "";
     String sortOrder = "";
 
-    // Getting sorting criteria from preferences. Reminder screen forces sorting.
+    // Getting sorting criteria from preferences. Reminder screen forces sorting.（从偏好设置中获取排序条件。提醒界面强制进行排序。）
     if (checkNavigation(Navigation.REMINDERS)) {
       sortColumn = KEY_REMINDER;
     } else {
       sortColumn = Prefs.getString(PREF_SORTING_COLUMN, KEY_TITLE);
     }
+    //标题/提醒按字母升序，其他列（如创建时间）按降序
     if (order) {
       sortOrder =
           KEY_TITLE.equals(sortColumn) || KEY_REMINDER.equals(sortColumn) ? " ASC " : " DESC ";
     }
 
     // In case of title sorting criteria it must be handled empty title by concatenating content
+    //按标题排序时，用“标题||内容”拼接：标题为空的笔记一内容参与排序，避免空串排到前面
     sortColumn = KEY_TITLE.equals(sortColumn) ? KEY_TITLE + "||" + KEY_CONTENT : sortColumn;
 
     // In case of reminder sorting criteria the empty reminder notes must be moved on bottom of results
+    //（如果按提醒事项排序规则，空白提醒备注必须排在结果列表的底部）
     sortColumn = KEY_REMINDER.equals(sortColumn) ? "IFNULL(" + KEY_REMINDER + ", " +
         "" + TIMESTAMP_UNIX_EPOCH + ")" : sortColumn;
 
-    // Generic query to be specialized with conditions passed as parameter
+    // Generic query to be specialized with conditions passed as parameter（需要通过传入参数中的条件进行具体化的通用查询语句）
+    //主查询：SELECT 18列，LEFT JOIN categories 联表带回分类名称/描述/颜色，再拼接调用方法传入的where条件与排序子句
     String query = "SELECT "
         + KEY_CREATION + ","
         + KEY_LAST_MODIFICATION + ","
@@ -578,21 +584,25 @@ public class DbHelper extends SQLiteOpenHelper {
 
     LogDelegate.v("Query: " + query);
 
+    //执行查询并遍历游标：try-with-resources自动关闭游标，避免资源泄漏
     try (Cursor cursor = getDatabase().rawQuery(query, null)) {
 
+      //游标移到首行后进入循环，逐行构建Note对象
       if (cursor.moveToFirst()) {
         do {
-          int i = 0;
+          int i = 0;//列索引计数器：严格按SELECT列顺序递增读取
           Note note = new Note();
           note.setCreation(cursor.getLong(i++));
           note.setLastModification(cursor.getLong(i++));
           note.setTitle(cursor.getString(i++));
           note.setContent(cursor.getString(i++));
+          //SQLite 无布尔型：archived/trsdhed存“0”/“1”字符串，此处转换回布尔
           note.setArchived("1".equals(cursor.getString(i++)));
           note.setTrashed("1".equals(cursor.getString(i++)));
           note.setAlarm(cursor.getString(i++));
           note.setReminderFired(cursor.getInt(i++));
           note.setRecurrenceRule(cursor.getString(i++));
+          //经纬度可能为空，用isNull判空后置null
           note.setLatitude(cursor.isNull(i) ? null : cursor.getDouble(i));
           i++;
           note.setLongitude(cursor.isNull(i) ? null : cursor.getDouble(i));
@@ -601,13 +611,15 @@ public class DbHelper extends SQLiteOpenHelper {
           note.setLocked("1".equals(cursor.getString(i++)));
           note.setChecklist("1".equals(cursor.getString(i++)));
 
-          // Eventual decryption of content
+          // Eventual decryption of content（内容的最终解密)
+          //读到的内容若是锁定便签，则用密码解密还原明文（与updateNote写入时加密对称）
           if (Boolean.TRUE.equals(note.isLocked())) {
             note.setContent(
                 Security.decrypt(note.getContent(), Prefs.getString(PREF_PASSWORD, "")));
           }
 
-          // Set category
+          // Set category（设置分类）
+          //读取分类外键：非0才构造分类对象并读回分类名/描述/颜色
           long categoryId = cursor.getLong(i++);
           if (categoryId != 0) {
             Category category = new Category(categoryId, cursor.getString(i++),
@@ -615,13 +627,14 @@ public class DbHelper extends SQLiteOpenHelper {
             note.setCategory(category);
           }
 
-          // Add eventual attachments uri
+          // Add eventual attachments uri（添加最终附件的统一资源标识符）
+          //二次查询该笔记的全部附件（按note_id 查 attachments 表）挂到 Note 上
           note.setAttachmentsList(getNoteAttachments(note));
 
-          // Adding note to list
+          // Adding note to list（向列表添加备注）
           noteList.add(note);
 
-        } while (cursor.moveToNext());
+        } while (cursor.moveToNext());//游标下移，直到遍历完所有行
       }
 
     }
