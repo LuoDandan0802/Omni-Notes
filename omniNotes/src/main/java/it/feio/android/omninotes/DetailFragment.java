@@ -567,33 +567,19 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       init();
     }
   }
-/**
- * @description 解析并处理所有唤醒或跳转到当前页面的外部 Intent 意图。
- * @why 这是 App 与外部环境交互的核心枢纽。根据不同的动作（Action），决定页面的初始化和数据加载方式。
- * 涵盖的核心业务包括：
- * 1. 多选合并：提取需要被合并的旧便签 ID。
- * 2. 快捷入口：处理从桌面快捷方式、通知栏点击进入的便签加载（含防崩溃处理）。
- * 3. 小部件定制：解析桌面小部件绑定的分类标签或拍照指令。
- * 4. 跨应用分享：接收微信、浏览器等第三方 App 发送的文本和附件。
- * 5. 键盘与状态复位：智能判断是否需要自动弹出输入法，并在处理完毕后清空 Action，防止屏幕旋转导致事件被重复触发。
- */
+
   private void handleIntents() {
     Intent i = mainActivity.getIntent();
-    //why：当用户多选并点击“合并”时，系统会把其他被合并便签的 ID 打包成字符串列表，通过 Intent 的 "merged_notes" 标签传过来。
-    // 这里先做非空判断（防止正常新建便签时拿到 null），然后把 ID 列表暂存到 mergedNotesIds 变量中。
-    // 这样后续用户点击“保存”时，系统才知道该去数据库里删除哪些旧的便签。
+
     if (IntentChecker.checkAction(i, ACTION_MERGE)) {
       noteOriginal = new Note();
-      note = new Note(noteOriginal); //读取 noteOriginal 里的所有数据（标题、内容、闹钟、分类等），赋值给这个新对象
-      noteTmp = getArguments().getParcelable(INTENT_NOTE); // getArguments() 是 Fragment 的方法，负责把系统绑定的专属 Bundle 快递盒抱出来，getParcelable() 是 Bundle 盒子的方法，负责拆开盒子，找到标签为 INTENT_NOTE 的数据，并解压还原成 Note 对象。
+      note = new Note(noteOriginal);
+      noteTmp = getArguments().getParcelable(INTENT_NOTE);
       if (i.getStringArrayListExtra("merged_notes") != null) {
         mergedNotesIds = i.getStringArrayListExtra("merged_notes");
       }
     }
-    /**
-     * 1. 设定退出行为：标记保存后直接关闭 App，不返回列表页。
-     * 2. 容错处理：根据 ID 查数据库并克隆对象。用 try-catch 防止便签已被删除（空指针）导致 App 闪退，一旦报错立即提示并关页。
-     */
+
     // Action called from home shortcut
     if (IntentChecker.checkAction(i, ACTION_SHORTCUT, ACTION_NOTIFICATION_CLICK)) {
       afterSavedReturnsToList = false;
@@ -603,28 +589,26 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
         note = new Note(noteOriginal);
         noteTmp = new Note(noteOriginal);
       } catch (NullPointerException e) {
-        mainActivity.showToast(getText(R.string.shortcut_note_deleted), Toast.LENGTH_LONG); //mainActivity.showToast(...)：弹个提示
+        mainActivity.showToast(getText(R.string.shortcut_note_deleted), Toast.LENGTH_LONG);
         mainActivity.finish();
       }
     }
-    /**
-     * 保存后直接关闭 App，因为从桌面小部件进来时背后没有列表页可退。强制自动弹起软键盘
-     */
+
     // Check if is launched from a widget
     if (IntentChecker.checkAction(i, ACTION_WIDGET, ACTION_WIDGET_TAKE_PHOTO)) {
 
       afterSavedReturnsToList = false;
-      showKeyboard = true; //把“显示键盘”的开关打开。
+      showKeyboard = true;
 
       //  with tags to set tag
       if (i.hasExtra(INTENT_WIDGET)) {
         String widgetId = i.getExtras().get(INTENT_WIDGET).toString();
-        String sqlCondition = Prefs.getString(PREF_WIDGET_PREFIX + widgetId, ""); //去 App 的“配置小本本”（Prefs）里查用户当初设置这个小部件时，保存的 SQL 查询条件
-        String categoryId = TextHelper.checkIntentCategory(sqlCondition); // // 【正则魔法】使用系统工具类TextHelper从 SQL 语句中提取出绑定的 Category ID
+        String sqlCondition = Prefs.getString(PREF_WIDGET_PREFIX + widgetId, "");
+        String categoryId = TextHelper.checkIntentCategory(sqlCondition);
         if (categoryId != null) {
           Category category;
           try {
-            category = DbHelper.getInstance().getCategory(parseLong(categoryId)); //将字符串 ID 转成数字，去数据库查出对应的分类实体
+            category = DbHelper.getInstance().getCategory(parseLong(categoryId));
             noteTmp = new Note();
             noteTmp.setCategory(category);
           } catch (NumberFormatException e) {
@@ -632,40 +616,35 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
           }
         }
       }
-       /**
-        * 检查动作是否为“从桌面小部件直接拍照”，如果是直接唤起系统相机
-        */
+
       // Sub-action is to take a photo
       if (IntentChecker.checkAction(i, ACTION_WIDGET_TAKE_PHOTO)) {
         takePhoto();
       }
     }
-    /**
-     * 判断是不是“通过悬浮按钮（FAB）拍照
-     */
+
     if (IntentChecker.checkAction(i, ACTION_FAB_TAKE_PHOTO)) {
       takePhoto();
     }
 
     // Handles third party apps requests of sharing
-    if (IntentChecker                                                                                                    //ACTION_PROCESS_TEXT划词处理
-        .checkAction(i, Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE, Intent.ACTION_PROCESS_TEXT, INTENT_GOOGLE_NOW) //只要用户是从别的 App 点“分享”进来的，不管分享的是文字还是图片，条件就成立。
+    if (IntentChecker
+        .checkAction(i, Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE, Intent.ACTION_PROCESS_TEXT, INTENT_GOOGLE_NOW)
         && i.getType() != null) {
 
-      afterSavedReturnsToList = false; //设置退出
+      afterSavedReturnsToList = false;
 
       if (noteTmp == null) {
         noteTmp = new Note();
       }
 
-      // Text title//设标题
+      // Text title
       String title = i.getStringExtra(Intent.EXTRA_SUBJECT);
       if (title != null) {
         noteTmp.setTitle(title);
       }
 
       // Text content
-      // 提取分享的正文内容
       String content = null;
       if (Intent.ACTION_PROCESS_TEXT.equals(i.getAction())){
         content = i.getStringExtra(Intent.EXTRA_PROCESS_TEXT).toString();
@@ -677,17 +656,17 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
         noteTmp.setContent(content);
       }
 
-      importAttachments(i); // ：如果用户分享的是一张图片或一段视频，那它不在文本字段里。这里调用专门的方法去解析流数据，把图片/视频提取成附件保存起来。
+      importAttachments(i);
 
     }
 
     if (IntentChecker
-        .checkAction(i, Intent.ACTION_MAIN, ACTION_WIDGET_SHOW_LIST, ACTION_SHORTCUT_WIDGET,//Intent.ACTION_MAIN：正常点击桌面图标启动 App，ACTION_WIDGET_SHOW_LIST：从桌面小部件点击进入列表。
-            ACTION_WIDGET)) {                                                               //ACTION_SHORTCUT_WIDGET：从桌面快捷方式图标（新建便签）进入，ACTION_WIDGET：从桌面小部件点击进入
+        .checkAction(i, Intent.ACTION_MAIN, ACTION_WIDGET_SHOW_LIST, ACTION_SHORTCUT_WIDGET,
+            ACTION_WIDGET)) {
       showKeyboard = true;
     }
 
-    i.setAction(null); //把当前 Intent（意图）的动作（Action）清空，处理外部意图，就得销毁痕迹，防止二次触发
+    i.setAction(null);
   }
 
   private void importAttachments(Intent i) {
