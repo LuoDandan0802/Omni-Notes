@@ -20,6 +20,7 @@ package it.feio.android.omninotes;
  * android.或androidx.开头的导入，这是Google专门为Android系统开发的SDK类库
  */
 
+import static android.Manifest.permission.CAMERA;
 import static android.content.Context.CLIPBOARD_SERVICE;
 import static android.content.Context.LAYOUT_INFLATER_SERVICE;
 import static android.content.pm.PackageManager.FEATURE_CAMERA;
@@ -472,7 +473,6 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
    * 3. 保存判断：goBack标记区分场景，非返回退出页面时自动保存便签，防止重复保存
    * 4. 收起键盘：页面离开时隐藏软键盘、清除控件焦点，优化交互体验
    */
-  @Override
   @Override
   public void onPause() {
     super.onPause();
@@ -1990,7 +1990,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 
     // Checks if user has left the app
     if (mainActivity != null) {
-      Animation mAnimation = AnimationUtils.loadAnimation(mainActivity, anim);
+      @SuppressLint("ResourceType") Animation mAnimation = AnimationUtils.loadAnimation(mainActivity, anim);
       mAnimation.setAnimationListener(new AnimationListener() {
         @Override
         public void onAnimationStart(Animation animation) {
