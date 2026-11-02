@@ -639,129 +639,149 @@ public class DbHelper extends SQLiteOpenHelper {
 
     }
 
-    LogDelegate.v("Query: Retrieval finished!");
+    LogDelegate.v("Query: Retrieval finished!");//日志：查询完成（verbose级，仅调试可见）
     return noteList;
   }
 
 
   /**
-   * Archives/restore single note
+   * Archives/restore single note（归档/恢复单个笔记）
+   * 只翻转 archived 标记并复用 updateNote 落库，不动其他字段
+   * @why 归档是软删除的一种，保留数据便于归档视图恢复，不物理删除
    */
   public void archiveNote(Note note, boolean archive) {
-    note.setArchived(archive);
-    updateNote(note, false);
+    note.setArchived(archive);//翻转归档标记
+    updateNote(note, false);//复用统一保存流程落库（false = 不删附件）
   }
 
 
   /**
-   * Trashes/restore single note
+   * Trashes/restore single note（回收站/恢复单条笔记）
+   * @why 与归档相似：软删除，进回收站后可恢复，避免误删
    */
   public void trashNote(Note note, boolean trash) {
-    note.setTrashed(trash);
-    updateNote(note, false);
+    note.setTrashed(trash);//翻转回收站标记
+    updateNote(note, false);//复用统一保存流程落库
   }
 
 
   /**
-   * Deleting single note
+   * Deleting single note（删除单个笔记）
+   *   重载①：按 Note 对象，默认连附件一起删
    */
   public boolean deleteNote(Note note) {
-    return deleteNote(note, false);
+    return deleteNote(note, false);//默认删除时连同附件记录一起删
   }
 
 
   /**
-   * Deleting single note, eventually keeping attachments
+   * Deleting single note, eventually keeping attachments（删除单条笔记，保留附件）
+   *   重载②：可指定是否保留附件
+   *   @why 分离 Note 对象与 ID 两个入口，调用方按手头参数选择；keepAttachments 供备份恢复等场景
    */
   public boolean deleteNote(Note note, boolean keepAttachments) {
-    return deleteNote(note.get_id(), keepAttachments);
+    return deleteNote(note.get_id(), keepAttachments);//取 ID 调转按 ID 删除的核心实现
   }
 
 
   /**
-   * Deleting single note by its ID
+   * Deleting single note by its ID（通过ID删除单条笔记）
+   * 先删 notes 表记录，再默认级联删 attachments 表记录；keepAttachments=true 时保留附件
+   * @why 附件表用 note_id 外键关联，不手动级联删除会留下孤儿附件行，占存储且查询脏数据
    */
   public boolean deleteNote(long noteId, boolean keepAttachments) {
-    SQLiteDatabase db = getDatabase(true);
-    db.delete(TABLE_NOTES, KEY_ID + " = ?", new String[]{String.valueOf(noteId)});
+    SQLiteDatabase db = getDatabase(true);//打开可写数据库（true=强制新实例，避免旧连接竞争）
+    db.delete(TABLE_NOTES, KEY_ID + " = ?", new String[]{String.valueOf(noteId)});//按主键参数化删除笔记，防SQL注入
     if (!keepAttachments) {
       db.delete(TABLE_ATTACHMENTS, KEY_ATTACHMENT_NOTE_ID + " = ?",
-          new String[]{String.valueOf(noteId)});
+          new String[]{String.valueOf(noteId)});//级联删除该笔记全部附件行，防孤儿数据
     }
     return true;
   }
 
 
   /**
-   * Empties trash deleting all trashed notes
+   * Empties trash deleting all trashed notes（清空回收站，删除所有已移入回收站的笔记）
+   * @why 回收站笔记仍占存储，用户确认清空时彻底释放（连同附件）
    */
   public void emptyTrash() {
+    //先取出全部 trashed=1的笔记
     for (Note note : getNotesTrashed()) {
-      deleteNote(note);
+      deleteNote(note);//逐个物理删除（默认连附件）
     }
   }
 
 
   /**
-   * Gets notes matching pattern with title or content text
+   * Gets notes matching pattern with title or content text（获取标题或内容文本匹配指定模式的笔记）
    *
-   * @param pattern String to match with
-   * @return Notes list
+   * @param pattern String to match with（要匹配的字符串）
+   * @return Notes list（笔记列表）
+   * 先按当前导航拼过滤（回收站/归档/分类/未分类/提醒），再拼关键字匹配；
+   * 锁定笔记只匹配标题不匹配内容（内容为密文，无法明文匹配，也避免解密开销）
+   * @why 搜素在SQL层完成粗筛，减少 Java 层遍历量；加密笔记不解密搜索是性能与安全的权衡
    */
   public List<Note> getNotesByPattern(String pattern) {
-    String escapedPattern = escapeSql(pattern);
-    int navigation = Navigation.getNavigation();
+    String escapedPattern = escapeSql(pattern);//先转义用户输入，防注入与通配符误匹配
+    int navigation = Navigation.getNavigation();//读取当前导航状态（全部/归档/回收站/分类/未分类/提醒）
     String whereCondition = " WHERE "
-        + KEY_TRASHED + (navigation == Navigation.TRASH ? " IS 1" : " IS NOT 1")
-        + (navigation == Navigation.ARCHIVE ? " AND " + KEY_ARCHIVED + " IS 1" : "")
+        + KEY_TRASHED + (navigation == Navigation.TRASH ? " IS 1" : " IS NOT 1")//回收站导航只搜已删，其他导航排除已删
+        + (navigation == Navigation.ARCHIVE ? " AND " + KEY_ARCHIVED + " IS 1" : "")//归档视图下额外限定 archived=1
         + (navigation == Navigation.CATEGORY ? " AND " + KEY_CATEGORY + " = " + Navigation
-        .getCategory() : "")
+        .getCategory() : "")//分类视图下限定分类
         + (navigation == Navigation.UNCATEGORIZED ? " AND (" + KEY_CATEGORY + " IS NULL OR "
         + KEY_CATEGORY_ID
-        + " == 0) " : "")
+        + " == 0) " : "")//未分类视图限定无分类笔记
         + (checkNavigation(Navigation.REMINDERS) ? " AND " + KEY_REMINDER
-        + " IS NOT NULL" : "")
+        + " IS NOT NULL" : "")//提醒视图限定有提醒时间
         + " AND ("
         + " ( " + KEY_LOCKED + " IS NOT 1 AND (" + KEY_TITLE + " LIKE '%" + escapedPattern
-        + "%' ESCAPE '\\' " + " OR "
+        + "%' ESCAPE '\\' " + " OR "// 指定转义字符，与 escapeSql 的 %/_ 转义配套
         +
-        KEY_CONTENT + " LIKE '%" + escapedPattern + "%' ESCAPE '\\' ))"
+        KEY_CONTENT + " LIKE '%" + escapedPattern + "%' ESCAPE '\\' ))"//未锁定笔记标题或内容均可命中
         + " OR ( " + KEY_LOCKED + " = 1 AND " + KEY_TITLE + " LIKE '%" + escapedPattern
         + "%' ESCAPE '\\' )"
-        + ")";
-    return getNotes(whereCondition, true);
+        + ")";//锁定笔记只按标题匹配
+    return getNotes(whereCondition, true);//复用统一查询入口，order=true按默认排序
   }
 
+  /**
+   * 转义SQL LIKE 模式中的特殊字符
+   * '→"(SQL字符串转义）；%和_ → \% \_（LIKE通配符转义）
+   * @why 用户输入直接拼进SQL会引发注入或通配符误匹配，必须先转义再拼接
+   */
   static String escapeSql(String pattern) {
-    return StringUtils.replace(pattern, "'", "''")
+    return StringUtils.replace(pattern, "'", "''")//单引号翻倍：SQL字符串字面量转义，防注入
         .replace("%", "\\%")
-        .replace("_", "\\_");
+        .replace("_", "\\_");//通配符转义
   }
 
 
   /**
-   * Search for notes with reminder
+   * Search for notes with reminder（搜索带有提醒的笔记）
    *
-   * @param filterPastReminders Excludes past reminders
-   * @return Notes list
+   * @param filterPastReminders Excludes past reminders（排除过往提醒）
+   * @return Notes list（笔记列表）
+   * @why 提醒列表页需区分“待提醒”与“全部提醒”，是否过滤过去时间由调用方决定
    */
   public List<Note> getNotesWithReminder(boolean filterPastReminders) {
     String whereCondition = " WHERE " + KEY_REMINDER
-        + (filterPastReminders ? " >= " + Calendar.getInstance().getTimeInMillis() : " IS NOT NULL")
+        + (filterPastReminders ? " >= " + Calendar.getInstance().getTimeInMillis() : " IS NOT NULL")//当前时间毫秒值，与库中提醒时间戳同单位比较
         + " AND " + KEY_ARCHIVED + " IS NOT 1"
-        + " AND " + KEY_TRASHED + " IS NOT 1";
+        + " AND " + KEY_TRASHED + " IS NOT 1";// 只显示在用笔记，排除归档与回收站
     return getNotes(whereCondition, true);
   }
 
 
   /**
-   * Returns all notes that have a reminder that has not been alredy fired
+   * Returns all notes that have a reminder that has not been alredy fired（返回所有包含尚未触发提醒的笔记）
    *
-   * @return Notes list
+   * @return Notes list（笔记列表）
+   * @why 供提醒轮询/接收器判断哪些需要真正发通知；reminder_fired=1 的已通知过，不再重复
    */
   public List<Note> getNotesWithReminderNotFired() {
     String whereCondition = " WHERE " + KEY_REMINDER + " IS NOT NULL"
-        + " AND " + KEY_REMINDER_FIRED + " IS NOT 1"
+        + " AND " + KEY_REMINDER_FIRED + " IS NOT 1"//排除已触发过的，避免重复通知
         + " AND " + KEY_ARCHIVED + " IS NOT 1"
         + " AND " + KEY_TRASHED + " IS NOT 1";
     return getNotes(whereCondition, true);
@@ -769,52 +789,66 @@ public class DbHelper extends SQLiteOpenHelper {
 
 
   /**
-   * Returns all notes with a reminder, regardless of their navigation state
+   * Returns all notes with a reminder, regardless of their navigation state（返回所有带有提醒的笔记，不受其导航状态影响）
    *
    * @return Notes list
+   * @why 备份/统计等场景需要完整提醒清单，不走导航过滤
    */
   public List<Note> getAllNotesWithReminder() {
-    return getNotes(" WHERE " + KEY_REMINDER + " IS NOT NULL", false);
+    return getNotes(" WHERE " + KEY_REMINDER + " IS NOT NULL", false);// 无额外过滤 + 不排序，按插入顺序返回
   }
 
 
   /**
-   * Retrieves locked or unlocked notes
+   * Retrieves locked or unlocked notes（检索已锁定或未锁定的笔记）
+   * @param locked true=只取锁定便签，false=只取未锁定便签
    */
   public List<Note> getNotesWithLock(boolean locked) {
-    String whereCondition = " WHERE " + KEY_LOCKED + (locked ? " = 1 " : " IS NOT 1 ");
+    String whereCondition = " WHERE " + KEY_LOCKED + (locked ? " = 1 " : " IS NOT 1 ");//locked=true 匹配 =1，false 匹配 IS NOT 1（含 NULL 未锁定）
     return getNotes(whereCondition, true);
   }
 
 
   /**
-   * Search for notes with reminder expiring the current day
+   * Search for notes with reminder expiring the current day（搜索提醒将于当日到期的笔记）
    *
    * @return Notes list
+   * 用 SQLite 日期函数把毫秒时间戳转成当天日期与"今天"比较
+   * @why 首页/小组件展示"今日提醒"，在 SQL 层按天过滤，避免全表拉到 Java 再判断
    */
   public List<Note> getTodayReminders() {
+    // 毫秒 ÷1000 转秒后取日期，与当前日期比较（同为 UTC 可比）
     String whereCondition =
         " WHERE DATE(" + KEY_REMINDER + "/1000, 'unixepoch') = DATE('now') AND " +
-            KEY_TRASHED + " IS NOT 1";
+            KEY_TRASHED + " IS NOT 1";// 回收站里的不参与提醒
     return getNotes(whereCondition, false);
   }
 
 
   /**
-   * Retrieves all attachments related to specific note
+   * Retrieves all attachments related to specific note（检索与指定笔记相关的所有附件）
+   * @why getNotes 逐条解析时调用（对应 L630），把附件列表挂到每个 Note 上
    */
   public List<Attachment> getNoteAttachments(Note note) {
-    String whereCondition = " WHERE " + KEY_ATTACHMENT_NOTE_ID + " = " + note.get_id();
-    return getAttachments(whereCondition);
+    String whereCondition = " WHERE " + KEY_ATTACHMENT_NOTE_ID + " = " + note.get_id();// 按外键 note_id 过滤（长整型拼接安全）
+    return getAttachments(whereCondition);// 复用附件查询统一入口
   }
 
 
+  /**
+   * 查询所有清单型笔记（checklist=1）
+   * @why 清单筛选视图需快速定位带勾选框的笔记
+   */
   public List<Note> getChecklists() {
     String whereCondition = " WHERE " + KEY_CHECKLIST + " = 1";
     return getNotes(whereCondition, false);
   }
 
 
+  /**
+   * 查询所有锁定（加密）笔记
+   * @why 锁定笔记在列表中显示为掩码摘要，需单独查询做特殊展示
+   */
   public List<Note> getMasked() {
     String whereCondition = " WHERE " + KEY_LOCKED + " = 1";
     return getNotes(whereCondition, false);
@@ -822,55 +856,61 @@ public class DbHelper extends SQLiteOpenHelper {
 
 
   /**
-   * Retrieves all notes related to Category it passed as parameter
+   * Retrieves all notes related to Category it passed as parameter（检索与传入参数中的分类相关的所有笔记）
    *
    * @param categoryId Category integer identifier
-   * @return List of notes with requested category
+   * @return List of notes with requested category（指定分类下的笔记列表）
+   * 先读该分类是否启用"隐藏已归档"偏好，再动态拼 where；
+   * 分类 ID 非法（NumberFormatException）时兜底返回全部未删便签，不让列表崩溃
+   * @why 分类过滤策略可由用户在偏好中自定义，故查询前须按分类 ID 读偏好决定
    */
   public List<Note> getNotesByCategory(Long categoryId) {
     List<Note> notes;
     boolean filterArchived = Prefs
-        .getBoolean(PREF_FILTER_ARCHIVED_IN_CATEGORIES + categoryId, false);
+        .getBoolean(PREF_FILTER_ARCHIVED_IN_CATEGORIES + categoryId, false);// 读该分类专属"隐藏已归档"偏好（键含分类 ID）
     try {
       String whereCondition = " WHERE "
-          + KEY_CATEGORY_ID + " = " + categoryId
-          + " AND " + KEY_TRASHED + " IS NOT 1"
-          + (filterArchived ? " AND " + KEY_ARCHIVED + " IS NOT 1" : "");
+          + KEY_CATEGORY_ID + " = " + categoryId// 按分类外键过滤
+          + " AND " + KEY_TRASHED + " IS NOT 1"// 回收站便签不显示
+          + (filterArchived ? " AND " + KEY_ARCHIVED + " IS NOT 1" : "");// 偏好启用时额外排除已归档
       notes = getNotes(whereCondition, true);
-    } catch (NumberFormatException e) {
-      notes = getAllNotes(true);
+    } catch (NumberFormatException e) {// categoryId 非法时兜底，不抛给 UI
+      notes = getAllNotes(true);// 兜底：返回全部未删便签
     }
     return notes;
   }
 
 
   /**
-   * Retrieves all tags
+   * Retrieves all tags（检索所有标签）
    */
   public List<Tag> getTags() {
-    return getTags(null);
+    return getTags(null);//null = 统计所有便签的标签
   }
 
 
   /**
-   * Retrieves all tags of a specified note
+   * Retrieves all tags of a specified note（获取指定笔记的所有标签）
+   * 标签 = 标题/内容中以 # 开头的词；HashMap 聚合计数，最后按标签名忽略大小写排序
+   * @param note null 时统计所有未删便签
+   * @why Omni-Notes 的标签不是独立实体表，而是 #hashtag 文本约定，读取时实时提取统计
    */
   public List<Tag> getTags(Note note) {
     List<Tag> tags = new ArrayList<>();
-    HashMap<String, Integer> tagsMap = new HashMap<>();
+    HashMap<String, Integer> tagsMap = new HashMap<>();// 标签名 → 出现次数
 
     String whereCondition = " WHERE "
         + (note != null ? KEY_ID + " = " + note.get_id() + " AND " : "")
-        + "(" + KEY_CONTENT + " LIKE '%#%' OR " + KEY_TITLE + " LIKE '%#%' " + ")"
-        + " AND " + KEY_TRASHED + " IS " + (checkNavigation(Navigation.TRASH) ? "1" : " NOT 1")
-        + " AND " + KEY_LOCKED + " IS NOT 1";
+        + "(" + KEY_CONTENT + " LIKE '%#%' OR " + KEY_TITLE + " LIKE '%#%' " + ")"// SQL 层先筛出可能含 # 的便签，减少 Java 遍历量
+        + " AND " + KEY_TRASHED + " IS " + (checkNavigation(Navigation.TRASH) ? "1" : " NOT 1")// 回收站视图统计回收站，否则统计非回收站
+        + " AND " + KEY_LOCKED + " IS NOT 1";// 锁定便签内容为密文，无法可靠提取标签，直接排除
     List<Note> notesRetrieved = getNotes(whereCondition, true);
 
     for (Note noteRetrieved : notesRetrieved) {
-      Map<String, Integer> tagsRetrieved = TagsHelper.retrieveTags(noteRetrieved);
+      Map<String, Integer> tagsRetrieved = TagsHelper.retrieveTags(noteRetrieved);// 从单条便签标题/内容提取 #词及计数
       for (String s : tagsRetrieved.keySet()) {
         int count = tagsMap.get(s) == null ? 0 : tagsMap.get(s);
-        tagsMap.put(s, ++count);
+        tagsMap.put(s, ++count);// 合并计数：首次置 1，重复累加
       }
     }
 
@@ -879,67 +919,74 @@ public class DbHelper extends SQLiteOpenHelper {
       tags.add(tag);
     }
 
-    Collections.sort(tags, (tag1, tag2) -> tag1.getText().compareToIgnoreCase(tag2.getText()));
+    Collections.sort(tags, (tag1, tag2) -> tag1.getText().compareToIgnoreCase(tag2.getText()));// 按标签文本忽略大小写排序，保证展示顺序稳定
     return tags;
   }
 
 
   /**
-   * Retrieves all notes related to category it passed as parameter
+   * Retrieves all notes related to category it passed as parameter（检索与传入参数中指定分类相关的所有笔记）
    */
   public List<Note> getNotesByTag(String tag) {
     return tag.contains(",")
       ? getNotesByTag(tag.split(","))
-      : getNotesByTag(new String[]{tag});
+      : getNotesByTag(new String[]{tag});// 逗号分隔表示多标签，拆开转数组走重载
   }
 
 
   /**
-   * Retrieves all notes with specified tags
+   * Retrieves all notes with specified tags（检索带有指定标签的所有笔记）
+   * 按多个标签查询便签（标签间为 AND 关系，须同时包含全部标签）
+   * 两步过滤：SQL 粗筛标题/内容含标签文本的便签 → 流式正则"整词匹配"精筛
+   * 锁定便签只匹配标题（密文无法匹配）；回收站便签仅在回收站视图纳入结果
+   * @why 纯 SQL LIKE 会把 "tagged" 误配成 "tag"，必须二次正则保证标签边界（前后为空白或行首尾）
    */
   public List<Note> getNotesByTag(String[] tags) {
-    var whereCondition = new StringBuilder();
+    var whereCondition = new StringBuilder();// 可变字符串逐段拼接 where，避免字符串频繁重建
     whereCondition.append(" WHERE ");
     for (int i = 0; i < tags.length; i++) {
       if (i != 0) {
         whereCondition.append(" AND ");
-      }
+      }// 多标签用 AND 连接，全部命中才算
       whereCondition.append(String.format("((%s IS 1 AND %s LIKE '%%%s%%') OR (%s is NOT 1 AND (%s LIKE '%%%s%%' OR %s LIKE '%%%s%%')))"
           , KEY_LOCKED, KEY_TITLE, tags[i], KEY_LOCKED, KEY_CONTENT, tags[i], KEY_TITLE, tags[i]));
-    }
+    }// 每个标签：锁定只查标题，未锁定查标题或内容（% 转义成 %% 由 String.format 处理）
     // Trashed notes must be included in search results only if search if performed from trash
+    // （已删除笔记仅在回收站中执行搜索时，才会出现在搜索结果里）
     whereCondition.append(" AND " + KEY_TRASHED + " IS ")
-        .append(checkNavigation(Navigation.TRASH) ? "" : "NOT ").append("1");
+        .append(checkNavigation(Navigation.TRASH) ? "" : "NOT ").append("1");// 回收站过滤与当前导航一致
 
     return getNotes(whereCondition.toString(), true).stream()
-        .map(note -> {
+        .map(note -> {// 流式二次精筛：逐条验证标签整词匹配
           boolean matches = Arrays.stream(tags)
-              .allMatch(tag -> {
-                var p = Pattern.compile(".*(\\s|^)" + tag + "(\\s|$).*", MULTILINE);
-                return p.matcher((note.getTitle() + " " + note.getContent())).find();
+              .allMatch(tag -> {// 所有标签都命中才保留
+                var p = Pattern.compile(".*(\\s|^)" + tag + "(\\s|$).*", MULTILINE);// 标签前后须为空白或行首尾（整词边界）
+                return p.matcher((note.getTitle() + " " + note.getContent())).find();// 标题+内容拼接后整体匹配
               });
           return matches ? note : null;
         })
-        .filter(Objects::nonNull)
-        .collect(toList());
+        .filter(Objects::nonNull)// 剔除未命中的 null
+        .collect(toList());// 收集为 List 返回
   }
 
   /**
-   * Retrieves all uncompleted checklists
+   * Retrieves all uncompleted checklists（检索所有未完成的检查清单）
+   * 条件：checklist=1 且内容中仍含未勾选符号，且不在回收站
+   * @why 全部勾完的清单没有提醒价值，"待办"入口只显示还有未完成项的
    */
   public List<Note> getNotesByUncompleteChecklist() {
     String whereCondition =
         " WHERE " + KEY_CHECKLIST + " = 1 AND " + KEY_CONTENT + " LIKE '%" + UNCHECKED_SYM + "%' AND "
-    + KEY_TRASHED + (checkNavigation(Navigation.TRASH) ? " IS 1" : " IS NOT 1");
+    + KEY_TRASHED + (checkNavigation(Navigation.TRASH) ? " IS 1" : " IS NOT 1");// 内容里还有未勾选项才算未完成
     return getNotes(whereCondition, true);
   }
 
 
   /**
-   * Retrieves all attachments
+   * Retrieves all attachments（检索所有附件）
    */
   public ArrayList<Attachment> getAllAttachments() {
-    return getAttachments("");
+    return getAttachments("");// 空条件 = 无过滤，查全表
   }
 
 
