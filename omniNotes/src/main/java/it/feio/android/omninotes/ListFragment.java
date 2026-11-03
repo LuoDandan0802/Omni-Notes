@@ -1041,74 +1041,88 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
    *
    * @FIXME: This method is a divine disgrace and MUST be refactored. I'm ashamed by myself.
    */
+  /**
+   * @description 列表页数据加载的核心调度枢纽。
+   * @why
+   * 负责解析复杂的 Intent 意图与用户交互状态，统一调度数据加载。
+   * 1. 状态恢复：交接并清空瞬间搜索缓存，处理外部 DeepLink 标签唤醒。
+   * 2. 搜索路由：根据关键字、标签、未完成清单等不同维度，利用反射机制异步调用底层查询。
+   * 3. 分类过滤：解析桌面小部件绑定的 SQL 规则或侧边栏选中的分类，精准加载对应数据。
+   * 4. 异步兜底：默认加载全部便签。全程通过 NoteLoaderTask 配合线程池，确保 UI 零阻塞。
+   */
   void initNotesList(Intent intent) {
-    LogDelegate.d("initNotesList intent: " + intent.getAction());
+    LogDelegate.d("initNotesList intent: " + intent.getAction()); // 在底部控制台打印一句话，接了 intent.getAction()，用于在控制台追踪当前 Intent 的 Action 字符串
 
-    binding.progressWheel.setAlpha(1);
-    binding.list.setAlpha(0);
+    binding.progressWheel.setAlpha(1); // 防止用户以为界面卡死了，通过 ViewBinding 获取到进度条控件，调用 setAlpha(1) 将透明度设为完全不透明（可见状态）
+    binding.list.setAlpha(0); // 将 RecyclerView（binding.list）的透明度设置为 0。这是一种防闪烁处理。
 
     // Search for a tag
     // A workaround to simplify it's to simulate normal search
     if (Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getCategories() != null
-        && intent.getCategories().contains(Intent.CATEGORY_BROWSABLE)) {
-      searchTags = intent.getDataString().replace(UrlCompleter.HASHTAG_SCHEME, "");
-      goBackOnToggleSearchLabel = true;
+        && intent.getCategories().contains(Intent.CATEGORY_BROWSABLE)) { // 为了过滤掉那些无效的启动请求。只有当用户是从“能点击的网页链接”跳过来时，才走这段逻辑。
+      searchTags = intent.getDataString().replace(UrlCompleter.HASHTAG_SCHEME, ""); // 通过 getDataString() 获取完整的 URI 字符串。
+      goBackOnToggleSearchLabel = true; // 这是一个状态标记，供后续用户点击取消搜索或物理返回键时，代码根据此标记判断是直接 finish() 结束 Activity（返回外部来源），还是仅清除搜索状态并回到主列表。
     }
 
-    if (ACTION_SHORTCUT_WIDGET.equals(intent.getAction())) {
-      return;
+    if (ACTION_SHORTCUT_WIDGET.equals(intent.getAction())) { // 检查一下，用户是不是点击了桌面上的“快捷方式小部件”（比如直接新建便签的快捷图标）进来的
+      return; // 如果是，直接退出
     }
 
     // Searching
-    searchQuery = searchQueryInstant;
-    searchQueryInstant = null;
+    searchQuery = searchQueryInstant; // 从临时缓存中提取搜索词，恢复当前的搜索状态
+    searchQueryInstant = null;  // 阅后即焚：交接完后立刻清空临时变量。
+    //判断当前是否处于任何一种搜索/过滤状态。
     if (searchTags != null || searchQuery != null || searchUncompleteChecklists
         || IntentChecker
         .checkAction(intent, Intent.ACTION_SEARCH, ACTION_SEARCH_UNCOMPLETE_CHECKLISTS)) {
 
       // Using tags
+      // 判断是否单纯基于标签进行搜索
       if (searchTags != null && intent.getStringExtra(SearchManager.QUERY) == null) {
-        searchQuery = searchTags;
+        searchQuery = searchTags; // // 将标签名赋给统一查询变量，方便后续顶部提示条显示“搜索：xxx”
         NoteLoaderTask.getInstance()
             .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getNotesByTag",
-                searchQuery);
+                searchQuery); // 分线程在数据库中查getNotesByTag，NoteLoaderTask 拿到这个字符串后，会在后台偷偷找到 DbHelper 类，看看里面有没有叫 getNotesByTag 的方法，有的话就动态执行它，把结果查出来
       } else if (searchUncompleteChecklists || ACTION_SEARCH_UNCOMPLETE_CHECKLISTS.equals(
-          intent.getAction())) {
-        searchQuery = getContext().getResources().getString(R.string.uncompleted_checklists);
+          intent.getAction())) { // // 检查一下用户是不是点了菜单里的“筛选未完成清单”或者是系统发来了一个专门的 Intent 要求看未完成清单
+        searchQuery = getContext().getResources().getString(R.string.uncompleted_checklists);//通过 Resources 获取本地化字符串，赋值给全局变量 searchQuery
         searchUncompleteChecklists = true;
         NoteLoaderTask.getInstance()
-            .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getNotesByUncompleteChecklist");
-      } else {
+            .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getNotesByUncompleteChecklist");//getInstance()：保证单例，防止并发查询冲突。
+      } else {                                                                                         //executeOnExecutor(..., "getNotesByUncompleteChecklist")：将任务扔进线程池。这里的字符串依然是反射调用的方法名，NoteLoaderTask 内部会利用反射机制去 DbHelper 里寻找对应的方法并执行。
         // Get the intent, verify the action and get the query
-        if (intent.getStringExtra(SearchManager.QUERY) != null) {
-          searchQuery = intent.getStringExtra(SearchManager.QUERY);
+        if (intent.getStringExtra(SearchManager.QUERY) != null) {  //  校验 Intent 中是否携带了系统标准的搜索关键字（SearchManager.QUERY）
+          searchQuery = intent.getStringExtra(SearchManager.QUERY); // 将搜索关键字存入全局状态变量 searchQuery，以便后续异步任务（
           searchTags = null;
         }
         NoteLoaderTask.getInstance()
             .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getNotesByPattern",
-                searchQuery);
+                searchQuery); // 所以调用 "getNotesByPattern"（模式匹配），底层 DbHelper 会将关键字拼接成 SQL 的 `LIKE '%关键字%'` 语句。
       }
 
-      toggleSearchLabel(true);
+      toggleSearchLabel(true); // 立刻在屏幕顶部渲染出“搜索：XXX”的提示条，并激活取消按钮，参数 true 代表“激活并显示搜索标签”，若为 false 则代表收起隐藏。
 
     } else {
       // Check if is launched from a widget with categories
+      // 条件1：是从桌面小部件（Widget）点进来的，且带了小部件的 ID。
+      // 条件2：MainActivity 的 navigationTmp 不为空（说明用户在侧边栏选定了特定分类）。
       if ((ACTION_WIDGET_SHOW_LIST.equals(intent.getAction()) && intent.hasExtra(INTENT_WIDGET))
           || !isEmpty(mainActivity.navigationTmp)) {
+        // 使用三元运算符判断是否携带了 Widget ID。如果带了就取出来，没带（比如从侧边栏进来的）就赋值为 null。
         String widgetId =
             intent.hasExtra(INTENT_WIDGET) ? intent.getExtras().get(INTENT_WIDGET).toString()
                 : null;
         if (widgetId != null) {
-          String sqlCondition = Prefs.getString(PREF_WIDGET_PREFIX + widgetId, "");
-          String categoryId = TextHelper.checkIntentCategory(sqlCondition);
+          String sqlCondition = Prefs.getString(PREF_WIDGET_PREFIX + widgetId, ""); // 拿到这串配置字符串。这串字符串通常是一句 SQL 语句
+          String categoryId = TextHelper.checkIntentCategory(sqlCondition); // 调用自定义的 TextHelper.checkIntentCategory() 方法，利用正则表达式解析 sqlCondition 字符串
           mainActivity.navigationTmp = !isEmpty(categoryId) ? categoryId : null;
         }
         intent.removeExtra(INTENT_WIDGET);
         if (mainActivity.navigationTmp != null) {
           Long categoryId = Long.parseLong(mainActivity.navigationTmp);
           NoteLoaderTask.getInstance().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR,
-              "getNotesByCategory", categoryId);
-        } else {
+              "getNotesByCategory", categoryId); // 用三元运算符（? :）进行状态赋值。如果 categoryId 有效，则赋给主界面的 navigationTmp 暂存；否则置为 null
+        } else { // 如果前面所有的特殊情况（搜索、标签、小部件、分类）都没有命中，那就默认去数据库里把所有便签都查出来，展示给用户看
           NoteLoaderTask.getInstance()
               .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getAllNotes", true);
         }
@@ -1195,12 +1209,20 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
               listAdapter.notifyItemChanged(i);
             }));
   }
-
+  /**
+   * @description 初始化 RecyclerView 的左右滑动交互手势（ItemTouchHelper）。
+   * @why
+   * 1. 规则定义：通过 SimpleCallback 设定仅允许左右滑动，禁用上下拖拽（防排序错乱）。
+   * 2. 业务派发：在 onSwiped 中捕获滑动索引，退出多选模式后交由 swipeNote 处理归档/删除逻辑。
+   * 3. 动态挂载：仅在非“未分类”视图且用户开启滑动偏好时，才绑定手势；否则传入 null 禁用。
+   */
   private void initSwipeGesture() {
+    // ：实例化 ItemTouchHelper.SimpleCallback。dragDirs 设为 0 禁用长按拖拽；swipeDirs 传入按位或运算的 LEFT | RIGHT，允许双向滑动。
     ItemTouchHelper.SimpleCallback simpleItemTouchCallback = new ItemTouchHelper.SimpleCallback(0,
         ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT) {
 
       @Override
+      //重写 onMove 方法并返回 false。由于我们只需要滑动功能（Swipe），不需要拖拽功能（Drag），所以直接拦截拖拽事件，防止列表项错位。
       public boolean onMove(@NonNull RecyclerView recyclerView,
           @NonNull RecyclerView.ViewHolder viewHolder,
           @NonNull RecyclerView.ViewHolder target) {
@@ -1208,6 +1230,7 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
       }
 
       @Override
+      /// 在 onSwiped 回调中，通过 getAdapterPosition() 获取数据索引。先调用 finishActionMode() 清理多选状态，再调用自定义的 swipeNote() 方法，将滑动位置传入，由业务层决定是执行归档还是移入回收站
       public void onSwiped(RecyclerView.ViewHolder viewHolder, int swipeDir) {
         int swipedPosition = viewHolder.getAdapterPosition();
         finishActionMode();
@@ -1215,12 +1238,12 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
       }
     };
     ItemTouchHelper itemTouchHelper = new ItemTouchHelper(simpleItemTouchCallback);
-
+    // 动态绑定：只有不在“未分类”下，且用户开启了滑动开关，才让滑动手势生效
     if (Navigation.getNavigation() != Navigation.UNCATEGORIZED && Prefs
         .getBoolean(PREF_ENABLE_SWIPE, true)) {
       itemTouchHelper.attachToRecyclerView(binding.list);
     } else {
-      itemTouchHelper.attachToRecyclerView(null);
+      itemTouchHelper.attachToRecyclerView(null); // // 传入 null 即可禁用滑动
     }
   }
 

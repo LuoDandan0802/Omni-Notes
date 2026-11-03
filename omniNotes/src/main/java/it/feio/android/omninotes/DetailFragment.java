@@ -1310,68 +1310,91 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 
     return true;
   }
-
+  /**
+   * @description 统一处理详情页顶部菜单栏的点击事件路由分发。
+   * @why
+   * 1. 防抖处理：通过 isOptionsItemFastClick 拦截快速连点，防止误触发重复操作或数据异常。
+   * 2. 统一路由：基于 switch-case 结构，根据不同的 MenuItem ID，将用户请求精准分发给对应的具体业务方法。
+   * 3. 防御兜底：对于未定义的菜单 ID，通过 LogDelegate 记录异常，防止 App 崩溃。
+   */
   @Override
   public boolean onOptionsItemSelected(MenuItem item) {
 
-    if (isOptionsItemFastClick()) {
+    if (isOptionsItemFastClick()) { // 【防误触机制】如果连续多次点击右上角按钮，就会退出。
       return true;
     }
-
+    // 【路由分发】根据菜单项的 ID 执行对应的业务逻辑
     switch (item.getItemId()) {
       case R.id.menu_attachment:
+        // 路由至：弹出附件选择菜单（拍照、录像、录音等）
         showAttachmentsPopup();
         break;
       case R.id.menu_tag:
+        // 路由至：弹出标签选择与编辑界面
         addTags();
         break;
       case R.id.menu_category:
+        // 路由至：弹出分类选择对话框
         categorizeNote();
         break;
       case R.id.menu_share:
+        // 路由至：调用系统分享面板分享当前便签
         shareNote();
         break;
       case R.id.menu_checklist_on:
       case R.id.menu_checklist_off:
+        // 路由至：切换普通文本模式与待办清单模式
         toggleChecklist();
         break;
       case R.id.menu_checklist_moveToBottom:
+        // 路由至：将已勾选的待办项移动到底部
         moveCheckedItemsToBottom();
         break;
       case R.id.menu_lock:
       case R.id.menu_unlock:
+        // 路由至：对便签进行加锁或解锁操作
         lockNote();
         break;
       case R.id.menu_pin_note:
+        // 路由至：将便签固定为常驻通知栏
         pinNote();
         break;
       case R.id.menu_add_shortcut:
+        // 路由至：在桌面添加快捷方式
         addShortcut();
         break;
       case R.id.menu_archive:
+        // 路由至：将便签移入归档
         archiveNote(true);
         break;
       case R.id.menu_unarchive:
+        // 路由至：取消便签归档
         archiveNote(false);
         break;
       case R.id.menu_trash:
+        // 路由至：将便签移入回收站
         trashNote(true);
         break;
       case R.id.menu_untrash:
+        // 路由至：从回收站还原便签
         trashNote(false);
         break;
       case R.id.menu_discard_changes:
+        // 路由至：放弃当前编辑的所有更改
         discard();
         break;
       case R.id.menu_delete:
+        // 路由至：彻底永久删除便签
         deleteNote();
         break;
       case R.id.menu_note_info:
+        // 路由至：显示便签的统计详情（字数、附件数等）
         showNoteInfo();
         break;
       default:
-        LogDelegate.w("Invalid menu option selected");
+        LogDelegate.w("Invalid menu option selected"); // LogDelegate 是项目自己封装的一个日志打印工具类，打印提醒
     }
+    // 将未处理的事件交还给父类处理，保持系统默认行为
     return super.onOptionsItemSelected(item);
   }
 
@@ -1559,52 +1582,71 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     pushbulletSelection.setVisibility(View.VISIBLE);
     pushbulletSelection.setOnClickListener(new AttachmentOnClickListener());
   }
-
+  /**
+   * @description 调用系统相机进行拍照，并将照片作为附件添加到当前便签。
+   * @why
+   * 1. 设备兼容性检查：通过 IntentChecker 预先检查设备是否具备摄像头及可处理意图，防止 ActivityNotFoundException 崩溃。
+   * 2. 动态权限申请：适配 Android 6.0+ 机制，在获得相机权限的回调后才真正执行拍照逻辑。
+   * 3. 提前占位与安全共享：先在私有目录创建空的 jpeg 文件作为输出载体；并通过 FileProvider 将 file:// 转换为 content:// 并授予临时读写权限，规避 Android 7.0+ 的 StrictMode 异常。
+   * 4. 异步回调接收：通过 startActivityForResult 携带 TAKE_PHOTO 请求码，在 onActivityResult 中接收照片并刷新 UI。
+   */
   private void takePhoto() {
     Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+    // 检查设备是否有摄像头以及是否有 App 能处理这个 Intent，防止崩溃
     if (!IntentChecker.isAvailable(mainActivity, intent, new String[]{FEATURE_CAMERA})) {
-      mainActivity.showMessage(R.string.feature_not_available_on_this_device, ONStyle.ALERT);
+      mainActivity.showMessage(R.string.feature_not_available_on_this_device, ONStyle.ALERT); // R.string.feature_not_available_on_this_device 对应文案：“设备不支持此功能”
       return;
     }
-
-    PermissionsHelper.requestPermission(this, CAMERA,
-        R.string.permission_camera, binding.snackbarPlaceholder, () -> {
+   ///能使用相机的过程
+    PermissionsHelper.requestPermission(this, CAMERA,  // 申请相机权限。
+        R.string.permission_camera, binding.snackbarPlaceholder, () -> { // Lambda 魔法：后面跟的 () -> { ... } 是一个回调函数。意思是：“如果用户点击了‘同意授权’，你就立刻执行大括号里面的代码
           // Checks for created file validity
-          File f = StorageHelper.createNewAttachmentFile(mainActivity, MIME_TYPE_IMAGE_EXT);
-          if (f == null) {
-            mainActivity.showMessage(R.string.error, ONStyle.ALERT);
+          File f = StorageHelper.createNewAttachmentFile(mainActivity, MIME_TYPE_IMAGE_EXT); // 提前创建一个空的图片文件，StorageHelper（存储小助手）去手机的私有目录里，新建一个后缀为 .jpeg 的空文件，MIME_TYPE_IMAGE_EXT指向的就是后缀为 .jpeg
+          // why:如用户手机存储空间满了，或者系统没给 App 读写文件的权限
+              if (f == null) {
+            mainActivity.showMessage(R.string.error, ONStyle.ALERT); // 调用主界面（mainActivity）的 showMessage 方法，R.string.error这是提示条里显示的文字内容，ALERT 代表红色警告/错误级别
             return;
           }
           attachmentUri = Uri.fromFile(f);
-          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-          intent.putExtra(MediaStore.EXTRA_OUTPUT, FileProviderHelper.getFileProvider(f));
-          startActivityForResult(intent, TAKE_PHOTO);
+          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); // 该 Flag 用于临时授予目标应用对该 Uri 的读取权限，确保文件能够被正确写入。
+          intent.putExtra(MediaStore.EXTRA_OUTPUT, FileProviderHelper.getFileProvider(f)); //通过 putExtra 设置 MediaStore.EXTRA_OUTPUT 键值，指明拍照结果的输出路径，同时，调用 FileProviderHelper 将 file:// 路径转换为 content:// 形式的安全 URI
+          startActivityForResult(intent, TAKE_PHOTO);  //执行跳转，并监听相机的返回结果
         });
   }
-
+  /**
+   * @description 调用系统摄像机录制视频并作为附件保存。
+   * @why
+   * 1. 防呆校验：先查硬件与系统支持，再申请相机动态权限。
+   * 2. 安全占位：创建沙盒空文件，并通过 FileProvider 转换安全 URI 授权给相机。
+   * 3. 容量熔断：读取偏好设置中的 MB 阈值并转为字节，限制系统相机的录制大小。
+   */
   private void takeVideo() {
     var takeVideoIntent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+    //  构建录像的隐式 Intent 并检查设备支持情况
     if (!IntentChecker.isAvailable(mainActivity, takeVideoIntent,
         new String[]{FEATURE_CAMERA})) {
-      mainActivity.showMessage(R.string.feature_not_available_on_this_device, ONStyle.ALERT);
+      mainActivity.showMessage(R.string.feature_not_available_on_this_device, ONStyle.ALERT); // // 弹出提示消息
       return;
     }
-
-    PermissionsHelper.requestPermission(this, CAMERA,
+   /// 可以录像时的过程
+    PermissionsHelper.requestPermission(this, CAMERA, // 向系统申请相机权限
         R.string.permission_camera, binding.snackbarPlaceholder, () -> {
           // File is stored in custom ON folder to speedup the attachment
+              //：调用 StorageHelper 在应用沙盒目录中生成一个指定扩展名（.mp4）的临时占位文件（Placeholder）。若文件实例化为 null（如发生 IO 异常），则弹窗报错并中断流程。
           var f = StorageHelper.createNewAttachmentFile(mainActivity, MIME_TYPE_VIDEO_EXT);
           if (f == null) {
             mainActivity.showMessage(R.string.error, ONStyle.ALERT);
             return;
           }
+          //生成文件的标准 Uri，并通过 FileProviderHelper 将 file:// 转换为 content://
           attachmentUri = Uri.fromFile(f);
           takeVideoIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
           takeVideoIntent.putExtra(MediaStore.EXTRA_OUTPUT, FileProviderHelper.getFileProvider(f));
+              //通过 Prefs 读取用户设定的视频大小阈值（单位 MB），借助 NumberHelper 将其转换为字节数，最后通过 MediaStore.EXTRA_SIZE_LIMIT 传入系统相机，从系统层面限制输出的视频体积。
           var maxVideoSizeStr = Prefs.getString("settings_max_video_size", "");
           long maxVideoSize = NumberHelper.megabytesToBytes(maxVideoSizeStr);
           takeVideoIntent.putExtra(MediaStore.EXTRA_SIZE_LIMIT, maxVideoSize);
-          startActivityForResult(takeVideoIntent, TAKE_VIDEO);
+          startActivityForResult(takeVideoIntent, TAKE_VIDEO); // 开启录像
         });
   }
 
@@ -1807,20 +1849,29 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   /**
    * Save new notes, modify them or archive
    */
+  /**
+   * @description 保存便签的核心方法。
+   * @why
+   * 1. 数据同步：将 UI 控件里的最新文字同步到数据模型。
+   * 2. 防垃圾数据：拦截“无标题、无内容、无附件”的三无空便签。
+   * 3. 防冗余保存：通过对比原件，判断是否真的发生了变化，没变就不写数据库。
+   * 4. 异步写入：将耗时的数据库事务交给 SaveNoteTask 在后台线程执行，保证 UI 流畅。
+   */
   void saveNote() {
+    // 从界面控件中提取用户输入的标题和内容，更新到便签模型
     noteTmp.setTitle(getNoteTitle());
     noteTmp.setContent(getNoteContent());
-
+    // 【防垃圾数据】如果是空便签，拒绝保存并直接退出
     // Check if some text or attachments of any type have been inserted or is an empty note
     if (goBack && TextUtils.isEmpty(noteTmp.getTitle()) && TextUtils.isEmpty(noteTmp.getContent())
-        && noteTmp.getAttachmentsList().isEmpty()) {
+        && noteTmp.getAttachmentsList().isEmpty()) { // 如果你按了返回键（goBack == true），而且标题、内容、附件全都是空的
       LogDelegate.d("Empty note not saved");
       exitMessage = getString(R.string.empty_note_not_saved);
-      exitCroutonStyle = ONStyle.INFO;
+      exitCroutonStyle = ONStyle.INFO; // / 设置提示框样式为“信息级（INFO）”，因为空便签不保存不算报错，只是提醒。Crouton 是项目里用的一个第三方提示库，ONStyle 是项目自己定义的样式类。这里给它赋值为 INFO
       goHome();
       return;
     }
-
+    //【防冗余保存】如果用户什么都没改，直接退出，不浪费数据库性能
     if (saveNotNeeded()) {
       exitMessage = "";
       if (goBack) {
@@ -1829,9 +1880,9 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       return;
     }
 
-    noteTmp.setAttachmentsListOld(note.getAttachmentsList());
-
-    new SaveNoteTask(lastModificationUpdatedNeeded()).executeOnExecutor(AsyncTask
+    noteTmp.setAttachmentsListOld(note.getAttachmentsList());  // Why：因为用户可能在编辑时删除了旧照片。把旧列表暂存起来，是为了让后台任务在保存时进行比对，从而精准地清理掉那些在手机存储中已经被用户移除的物理文件，防止产生垃圾。
+    // 开启异步任务写入数据库
+    new SaveNoteTask(lastModificationUpdatedNeeded()).executeOnExecutor(AsyncTask // lastModificationUpdatedNeeded()：判断是否需要更新便签的“最后修改时间”
         .THREAD_POOL_EXECUTOR, noteTmp);
   }
 
