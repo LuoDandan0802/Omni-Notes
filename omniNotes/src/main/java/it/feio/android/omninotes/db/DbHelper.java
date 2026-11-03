@@ -991,11 +991,16 @@ public class DbHelper extends SQLiteOpenHelper {
 
 
   /**
-   * Retrieves attachments using a condition passed as parameter
+   * Retrieves attachments using a condition passed as parameter（使用传入的参数条件检索附件）
    *
-   * @return List of attachments
+   * @return List of attachments（附件列表）
+   * 按条件查询附件列表（getNoteAttachments/getAllAttachments 的统一入口）
+   * 动态拼接 7 列 SELECT，游标逐行解析为 Attachment 对象
+   * @param whereCondition 过滤条件（空串=全表，含 note_id 条件=按笔记过滤）
+   * @why 附件查询入口统一收口到一个方法，避免多处重复写 SQL 与游标遍历
    */
   public ArrayList<Attachment> getAttachments(String whereCondition) {
+    // 按需拼条件：无过滤时 whereCondition 为空串即全表
     ArrayList<Attachment> attachmentsList = new ArrayList<>();
     String sql = "SELECT "
         + KEY_ATTACHMENT_ID + ","
@@ -1008,35 +1013,39 @@ public class DbHelper extends SQLiteOpenHelper {
         + " FROM " + TABLE_ATTACHMENTS
         + whereCondition;
 
-    Cursor cursor = null;
+    Cursor cursor = null;// 先置空，finally 里判空关闭，防 NPE
 
     try {
-      cursor = getDatabase().rawQuery(sql, null);
+      cursor = getDatabase().rawQuery(sql, null);// 无参数查询（条件已拼进 SQL），返回只读游标
 
-      // Looping through all rows and adding to list
-      if (cursor.moveToFirst()) {
+      // Looping through all rows and adding to list（遍历所有行并添加到列表中）
+      if (cursor.moveToFirst()) {// 有数据才进入遍历，无数据跳过 do-while
         do {
           var attachment = new Attachment(cursor.getLong(0),
               Uri.parse(cursor.getString(1)), cursor.getString(2), cursor.getInt(3),
-              cursor.getInt(4), cursor.getString(5));
-          attachment.setNoteId(cursor.getLong(6));
+              cursor.getInt(4), cursor.getString(5));// 按列序解析：id/uri/name/size/length/mime，Uri.parse 还原 uri 对象
+          attachment.setNoteId(cursor.getLong(6));// 第 7 列 note_id 单独 set（Attachment 构造不含该字段）
           attachmentsList.add(attachment);
-        } while (cursor.moveToNext());
+        } while (cursor.moveToNext());// 游标下移，遍历完所有行
       }
 
     } finally {
       if (cursor != null) {
         cursor.close();
       }
-    }
+    }// finally 保证游标必关，防止连接泄漏
     return attachmentsList;
   }
 
 
   /**
-   * Retrieves categories list from database
+   * Retrieves categories list from database（从数据库获取分类列表）
    *
-   * @return List of categories
+   * @return List of categories（类别列表）
+   * 查询全部分类及每个分类下的笔记数
+   * 子查询先取"未删除笔记"的 id/分类，再与分类表 LEFT JOIN USING(category)，
+   * 按分类字段 GROUP BY 后用 COUNT 统计各分类笔记数；空名分类排最后
+   * @why 分类列表页需要同时显示各分类的便签数量，故用一次联表查询取回，避免二次查询
    */
   public ArrayList<Category> getCategories() {
     ArrayList<Category> categoriesList = new ArrayList<>();
@@ -1045,19 +1054,19 @@ public class DbHelper extends SQLiteOpenHelper {
         + KEY_CATEGORY_NAME + ","
         + KEY_CATEGORY_DESCRIPTION + ","
         + KEY_CATEGORY_COLOR + ","
-        + " COUNT(" + KEY_ID + ") count"
+        + " COUNT(" + KEY_ID + ") count"// 对分组后的笔记数计数，作为第 5 列返回
         + " FROM " + TABLE_CATEGORY
         + " LEFT JOIN ("
         + " SELECT " + KEY_ID + ", " + KEY_CATEGORY
         + " FROM " + TABLE_NOTES
-        + " WHERE " + KEY_TRASHED + " IS NOT 1"
-        + ") USING( " + KEY_CATEGORY + ") "
+        + " WHERE " + KEY_TRASHED + " IS NOT 1"// 子查询先排除回收站便签，再联表
+        + ") USING( " + KEY_CATEGORY + ") "// 以 category 列为连接键，两表同名列直接匹配
         + " GROUP BY "
         + KEY_CATEGORY_ID + ","
         + KEY_CATEGORY_NAME + ","
         + KEY_CATEGORY_DESCRIPTION + ","
-        + KEY_CATEGORY_COLOR
-        + " ORDER BY IFNULL(NULLIF(" + KEY_CATEGORY_NAME + ", ''),'zzzzzzzz') ";
+        + KEY_CATEGORY_COLOR// 按分类四字段分组（id 唯一即按分类分组）
+        + " ORDER BY IFNULL(NULLIF(" + KEY_CATEGORY_NAME + ", ''),'zzzzzzzz') ";// 空分类名替换成 zzzz 排最后，非空按名字排序
 
     Cursor cursor = null;
     try {
@@ -1067,7 +1076,7 @@ public class DbHelper extends SQLiteOpenHelper {
         do {
           categoriesList.add(new Category(cursor.getLong(0),
               cursor.getString(1), cursor.getString(2), cursor
-              .getString(3), cursor.getInt(4)));
+              .getString(3), cursor.getInt(4)));// 第 5 列为笔记数
         } while (cursor.moveToNext());
       }
 
@@ -1075,56 +1084,65 @@ public class DbHelper extends SQLiteOpenHelper {
       if (cursor != null) {
         cursor.close();
       }
-    }
+    }// finally 保证游标必关
     return categoriesList;
   }
 
 
   /**
-   * Updates or insert a new a category
+   * Updates or insert a new a category（更新或插入一个新分类）
    *
-   * @param category Category to be updated or inserted
-   * @return Rows affected or new inserted category ID
+   * 分类 ID 为空时用当前时间戳生成（毫秒值作主键，避免自增依赖）
+   * @param category Category to be updated or inserted（待更新或新增的分类）
+   * @return Rows affected or new inserted category ID（受影响的行或新插入的分类ID）
+   * @why 用时间戳当 ID 保证唯一且无需额外自增查询；CONFLICT_REPLACE 让插入/更新一个方法搞定
    */
   public Category updateCategory(Category category) {
     ContentValues values = new ContentValues();
     values.put(KEY_CATEGORY_ID, category.getId() != null ? category.getId() : Calendar.getInstance()
-        .getTimeInMillis());
+        .getTimeInMillis());// ID 为空则用当前毫秒时间戳作主键
     values.put(KEY_CATEGORY_NAME, category.getName());
     values.put(KEY_CATEGORY_DESCRIPTION, category.getDescription());
     values.put(KEY_CATEGORY_COLOR, category.getColor());
+    // 主键冲突时整体替换，即"有则更新、无则插入"
     getDatabase(true).insertWithOnConflict(TABLE_CATEGORY, KEY_CATEGORY_ID, values, CONFLICT_REPLACE);
     return category;
   }
 
 
   /**
-   * Deletion of  a category
+   * Deletion of  a category（删除分类）
    *
-   * @param category Category to be deleted
-   * @return Number 1 if category's record has been deleted, 0 otherwise
+   * 先把该分类下所有笔记的 category 置空（解除关联），再删除分类记录
+   * @param category Category to be deleted（待删除分类）
+   * @return Number 1 if category's record has been deleted, 0 otherwise（如果该分类的记录已删除则为1，否则为0）
+   * @why 分类删除后其下笔记不能跟着消失，必须先解除外键关联，避免留下悬挂引用
    */
   public long deleteCategory(Category category) {
     long deleted;
 
-    SQLiteDatabase db = getDatabase(true);
-    // Un-categorize notes associated with this category
+    SQLiteDatabase db = getDatabase(true);// 可写数据库实例
+    // Un-categorize notes associated with this category（取消与此分类关联的笔记的分类归属）
     ContentValues values = new ContentValues();
-    values.putNull(KEY_CATEGORY);
+    values.putNull(KEY_CATEGORY);// 置空笔记的 category 字段（解除关联）
 
-    // Updating row
+    // Updating row（更新行）
     db.update(TABLE_NOTES, values, KEY_CATEGORY + " = ?",
-        new String[]{String.valueOf(category.getId())});
+        new String[]{String.valueOf(category.getId())});// 按分类 ID 参数化更新所有受影响笔记
 
-    // Delete category
+    // Delete category（删除分类）
     deleted = db.delete(TABLE_CATEGORY, KEY_CATEGORY_ID + " = ?",
-        new String[]{String.valueOf(category.getId())});
+        new String[]{String.valueOf(category.getId())});// 最后删分类记录
     return deleted;
   }
 
 
   /**
-   * Get note Category
+   * Get note Category（获取笔记分类）
+   * 按 ID 查询单个分类
+   * @param id 分类主键
+   * @return 分类对象，不存在时返回 null
+   * 便签详情页/编辑页需要按外键反查分类名称与颜色
    */
   public Category getCategory(Long id) {
     Category category = null;
@@ -1136,11 +1154,12 @@ public class DbHelper extends SQLiteOpenHelper {
         + " FROM " + TABLE_CATEGORY
         + " WHERE " + KEY_CATEGORY_ID + " = " + id;
 
+    // try-with-resources：方法结束自动关游标
     try (Cursor cursor = getDatabase().rawQuery(sql, null)) {
 
       if (cursor.moveToFirst()) {
         category = new Category(cursor.getLong(0), cursor.getString(1),
-            cursor.getString(2), cursor.getString(3));
+            cursor.getString(2), cursor.getString(3));// 只有查到记录才构造对象，否则保持 null
       }
 
     }
@@ -1148,31 +1167,40 @@ public class DbHelper extends SQLiteOpenHelper {
   }
 
 
+  /**
+   * 统计某分类下笔记的数量
+   * @param category 目标分类
+   * @return 该分类的笔记数（含回收站/归档，仅按 category 匹配）
+   * @why 删除分类前的确认提示/分类管理页显示数量
+   */
   public int getCategorizedCount(Category category) {
     int count = 0;
     String sql = "SELECT COUNT(*)"
         + " FROM " + TABLE_NOTES
-        + " WHERE " + KEY_CATEGORY + " = " + category.getId();
+        + " WHERE " + KEY_CATEGORY + " = " + category.getId();// 聚合计数，单行单列返回
 
     try (Cursor cursor = getDatabase().rawQuery(sql, null)) {
       if (cursor.moveToFirst()) {
         count = cursor.getInt(0);
       }
-    }
+    }// 自动关闭游标
     return count;
   }
 
 
   /**
-   * Retrieves statistics data based on app usage
+   * Retrieves statistics data based on app usage（基于应用使用情况检索统计数据）
+   * 统计应用使用数据（笔记状态/提醒/清单/标签/字数/附件类型），供"统计"页面展示
+   * 先遍历全部笔记统计文字类指标，再遍历全部附件按 MIME 分类计数
+   * @why 汇总统计需要全量数据，一次全查后内存中计数，避免多次查询数据库
    */
   public Stats getStats() {
-    Stats mStats = new Stats();
+    Stats mStats = new Stats();// 统计结果容器
 
     // Categories
-    mStats.setCategories(getCategories().size());
+    mStats.setCategories(getCategories().size());// 分类总数（复用分类查询）
 
-    // Everything about notes and their text stats
+    // Everything about notes and their text stats（关于笔记及其文本统计的全部内容）
     int notesActive = 0;
     int notesArchived = 0;
     int notesTrashed = 0;
@@ -1190,8 +1218,9 @@ public class DbHelper extends SQLiteOpenHelper {
     int avgChars;
     int words;
     int chars;
-    List<Note> notes = getAllNotes(false);
+    List<Note> notes = getAllNotes(false);// 全量拉取（不排序）后内存遍历统计
     for (Note note : notes) {
+      // 三态互斥：回收站 > 归档 > 在用，逐条归入对应计数
       if (Boolean.TRUE.equals(note.isTrashed())) {
         notesTrashed++;
       } else if (note.isArchived()) {
@@ -1199,6 +1228,7 @@ public class DbHelper extends SQLiteOpenHelper {
       } else {
         notesActive++;
       }
+      // 提醒按是否过期分两类：未来提醒 / 已过提醒
       if (note.getAlarm() != null && Long.parseLong(note.getAlarm()) > 0) {
         if (Long.parseLong(note.getAlarm()) > Calendar.getInstance().getTimeInMillis()) {
           remindersFuture++;
@@ -1206,16 +1236,20 @@ public class DbHelper extends SQLiteOpenHelper {
           reminders++;
         }
       }
+      // 清单型便签计数
       if (Boolean.TRUE.equals(note.isChecklist())) {
         checklists++;
       }
+      // 锁定便签计数
       if (Boolean.TRUE.equals(note.isLocked())) {
         notesMasked++;
       }
-      tags += TagsHelper.retrieveTags(note).size();
+      tags += TagsHelper.retrieveTags(note).size();// 累加每条便签的标签数（标签总出现次数）
+      // 有定位的便签计数
       if (note.getLongitude() != null && note.getLongitude() != 0) {
         locations++;
       }
+      // 逐条累计总字数/总字符并记录最大值
       words = NotesHelper.getWords(note);
       chars = NotesHelper.getChars(note);
       if (words > maxWords) {
@@ -1237,7 +1271,7 @@ public class DbHelper extends SQLiteOpenHelper {
     mStats.setTags(tags);
     mStats.setLocation(locations);
     avgWords = totalWords / (!notes.isEmpty() ? notes.size() : 1);
-    avgChars = totalChars / (!notes.isEmpty() ? notes.size() : 1);
+    avgChars = totalChars / (!notes.isEmpty() ? notes.size() : 1);// 除零保护：空列表时除数取 1，避免 ArithmeticException
 
     mStats.setWords(totalWords);
     mStats.setWordsMax(maxWords);
@@ -1246,14 +1280,15 @@ public class DbHelper extends SQLiteOpenHelper {
     mStats.setCharsMax(maxChars);
     mStats.setCharsAvg(avgChars);
 
-    // Everything about attachments
+    // Everything about attachments（所有关于附件的内容）
     int images = 0;
     int videos = 0;
     int audioRecordings = 0;
     int sketches = 0;
     int files = 0;
 
-    List<Attachment> attachments = getAllAttachments();
+    List<Attachment> attachments = getAllAttachments();// 全量附件，按 MIME 分类
+    // 按 MIME 类型分成图片/视频/录音/涂鸦/文件五类计数
     for (Attachment attachment : attachments) {
       if (MIME_TYPE_IMAGE.equals(attachment.getMime_type())) {
         images++;
@@ -1267,6 +1302,7 @@ public class DbHelper extends SQLiteOpenHelper {
         files++;
       }
     }
+    // 各类计数写入统计对象
     mStats.setAttachments(attachments.size());
     mStats.setImages(images);
     mStats.setVideos(videos);
@@ -1274,13 +1310,20 @@ public class DbHelper extends SQLiteOpenHelper {
     mStats.setSketches(sketches);
     mStats.setFiles(files);
 
-    return mStats;
+    return mStats;//返回汇总结果
   }
 
 
+  /**
+   * 设置便签提醒的"已触发"标记
+   * @param noteId 目标便签主键
+   * @param fired true=标记已通知（不再重复提醒），false=重置为未触发
+   * @why 提醒触发后写回 fired 标记，配合 getNotesWithReminderNotFired 避免重复发通知
+   */
   public void setReminderFired(long noteId, boolean fired) {
     ContentValues values = new ContentValues();
-    values.put(KEY_REMINDER_FIRED, fired);
+    values.put(KEY_REMINDER_FIRED, fired);// 仅更新 fired 一列
+    // 参数化按主键更新
     getDatabase(true)
         .update(TABLE_NOTES, values, KEY_ID + " = ?", new String[]{String.valueOf(noteId)});
   }
