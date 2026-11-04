@@ -85,7 +85,7 @@
     * 罗丹丹：精读完DbHelper剩余所有代码，理解方法快作用。
 *  **11月4日**：
     * 黄秀：
-    * 罗丹丹：
+    * 罗丹丹：完成 Security.kt、ReminderHelper.java、SaveNoteTask.java 的精读任务，并了解各个方法块的作用。
 *  **11月5日**：
     * 黄秀：
     * 罗丹丹：
