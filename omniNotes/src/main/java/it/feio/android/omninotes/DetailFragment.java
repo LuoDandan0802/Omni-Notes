@@ -1694,10 +1694,17 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     editable.insert(position, dateStamp);
     Selection.setSelection(editable, position + dateStamp.length());
   }
-
-  @SuppressLint("NewApi")
+  /**
+   * @description 统一处理所有外部组件（相机、相册、画板、分类页等）执行完毕后的返回结果。
+   * @why
+   * 1. 状态校验：通过 resultCode 确保操作成功（RESULT_OK），防止无效数据导致崩溃。
+   * 2. 路由分发：根据 requestCode 精准区分业务来源，将对应的物理文件或实体数据包装成 Attachment 或 Category。
+   * 3. UI 同步：完成数据模型的更新后，即刻触发 Adapter 刷新与 GridView 高度重测，确保新附件或新分类状态实时呈现给用户。
+   */
+  @SuppressLint("NewApi") // Android Lint 工具提供的一个注解，属于静态代码分析（Static Code Analysis）的抑制机制。如果你的 minSdkVersion 设得比较低（比如支持 Android 5.0），但你用了一个 Android 6.0 才出的方法，IDE 会提示你不兼容，这个标签就是告诉系统“这部分代码我确信运行环境没问题，不需要你管”
   @Override
-  public void onActivityResult(int requestCode, int resultCode, Intent intent) {
+  // 重写自 Fragment（或 Activity）的生命周期回调方法，接收并处理外部 Activity 返回的数据，把外部拿回来的东西（照片、文件、选择的分类）融合进当前的便签里
+  public void onActivityResult(int requestCode, int resultCode, Intent intent) { // requestCode相当于任务代号；resultCode任务完成的状态报告，判断是否成；intent相当于任务完成后的“数据包裹”，你要的东西全在里面
     // Fetch uri from activities, store into adapter and refresh adapter
     Attachment attachment;
     if (resultCode == Activity.RESULT_OK) {
@@ -1705,7 +1712,9 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
         case TAKE_PHOTO:
           attachment = new Attachment(attachmentUri, MIME_TYPE_IMAGE);
           addAttachment(attachment);
-          mAttachmentAdapter.notifyDataSetChanged();
+          mAttachmentAdapter.notifyDataSetChanged(); // //  UI 刷新：通知适配器数据已变更，触发重新渲染。调用 BaseAdapter 的 notifyDataSetChanged() 方法。这会触发 RecyclerView 或 GridView 的重新绘制流程，将最新的数据集合同步渲染到视图层
+          // 布局重测：重新计算 GridView 的高度；防止新增照片被截断显示，或者导致整个页面布局错乱
+          // Why：由于 GridView 在 ScrollView 中默认只显示一行，必须重新测量高度，否则新拍的照片会被遮挡或显示不全。
           mGridView.autoresize();
           break;
         case TAKE_VIDEO:
@@ -1714,24 +1723,26 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
           mAttachmentAdapter.notifyDataSetChanged();
           mGridView.autoresize();
           break;
-        case FILES:
-          onActivityResultManageReceivedFiles(intent);
+        case FILES: // 说明用户刚才去的是“文件选择器”
+          onActivityResultManageReceivedFiles(intent); // 调用自定义的私有方法，将包含 Uri 数据的 Intent 传递进去。该方法内部通常会判断 intent.getClipData()（多选文件）或 intent.getData()（单选文件），并循环开启 AttachmentTask 异步任务来复制和解析文件
           break;
-        case SET_PASSWORD:
-          noteTmp.setPasswordChecked(true);
-          lockUnlock();
+        // 【处理密码验证/设置返回】
+        // Why：用户从密码设置页返回，说明操作已成功且结果码为 RESULT_OK。
+          case SET_PASSWORD:
+          noteTmp.setPasswordChecked(true); //意思大概就是告诉别人你的密码输入正确了，给你ton
+          lockUnlock(); //调用此方法后，内部会翻转 isLocked 状态，并刷新顶部菜单的锁图标
           break;
-        case SKETCH:
+        case SKETCH: // 用户从画板界面成功返回，需要将画好的草图加入当前便签。
           attachment = new Attachment(attachmentUri, MIME_TYPE_SKETCH);
           addAttachment(attachment);
           mAttachmentAdapter.notifyDataSetChanged();
           mGridView.autoresize();
           break;
         case CATEGORY:
-          mainActivity.showMessage(R.string.category_saved, ONStyle.CONFIRM);
+          mainActivity.showMessage(R.string.category_saved, ONStyle.CONFIRM);// 调用封装的 showMessage 方法，传入文本资源 ID R.string.category_saved 和成功样式 ONSyle.CONFIRM，利用 Crouton 库渲染非阻塞式提示，提升用户体验
           Category category = intent.getParcelableExtra("category");
           noteTmp.setCategory(category);
-          setTagMarkerColor(category);
+          setTagMarkerColor(category); // UI 渲染：根据新分类的颜色属性，动态刷新界面上的标签颜色条
           break;
         case DETAIL:
           mainActivity.showMessage(R.string.note_updated, ONStyle.CONFIRM);
@@ -1760,15 +1771,22 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   /**
    * Discards changes done to the note and eventually delete new attachments
    */
+  /**
+   * @description 处理用户“放弃当前修改”的完整回滚流程。
+   * @why
+   * 1. 防误触：弹出二次确认对话框，保障高风险操作的安全性。
+   * 2. 物理清理：通过集合差集比对，精准定位并物理删除本次编辑新增的废弃附件，防止存储泄漏。
+   * 3. 状态回滚：若修改未变动则直接退出；若为已有便签则异步覆盖回滚数据库，并同步刷新桌面小部件；若为未落库的新建便签则直接销毁页面。
+   */
   private void discard() {
-    new MaterialDialog.Builder(mainActivity)
-        .content(R.string.undo_changes_note_confirmation)
-        .positiveText(R.string.ok)
-        .onPositive((dialog, which) -> {
-          if (!noteTmp.getAttachmentsList().equals(note.getAttachmentsList())) {
+    new MaterialDialog.Builder(mainActivity) //使用建造者模式（Builder Pattern）实例化第三方库 MaterialDialog 的构建器，并传入当前的 Context（mainActivity），用于绑定视图生命周期。
+        .content(R.string.undo_changes_note_confirmation) // 设置弹窗的主体文本内容（Message）,通过 R.string.xxx 引用字符串资源.意思就是在弹窗中间写上提示语，文字内容是资源文件里提前写好的
+        .positiveText(R.string.ok) // ：在弹窗的右侧（或下方），放一个写着“确定”的按钮，设置正向（Positive）按钮的文案。在 Material Design 规范中，Positive 按钮通常代表“继续”或“确认”操作
+        .onPositive((dialog, which) -> { // 点击确认之后执行代码
+          if (!noteTmp.getAttachmentsList().equals(note.getAttachmentsList())) { // 判断用户的修改操作是否引起了附件集合的变更
             for (Attachment newAttachment : noteTmp.getAttachmentsList()) {
               if (!note.getAttachmentsList().contains(newAttachment)) {
-                StorageHelper.delete(mainActivity, newAttachment.getUri().getPath());
+                StorageHelper.delete(mainActivity, newAttachment.getUri().getPath()); //调用 StorageHelper 工具类执行物理删除（I/O 操作）
               }
             }
           }
@@ -1776,18 +1794,21 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
           goBack = true;
 
           if (noteTmp.equals(noteOriginal)) {
-            goHome();
+            goHome(); // 直接关掉当前详情页，返回上一页
           }
 
-          if (noteOriginal.get_id() != null) {
-            new SaveNoteTask(false).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, noteOriginal);
-            BaseActivity.notifyAppWidgets(mainActivity);
+          if (noteOriginal.get_id() != null) {//区分当前便签是“旧便签”还是“完全新建的便签”，当前为旧标签
+            new SaveNoteTask(false).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, noteOriginal); //实例化异步任务 SaveNoteTask，将 noteOriginal 作为参数丢进线程池执行。传入 false 意味着在回写时不更新便签的“最后修改时间”，因为用户并没有真正修改它
+            BaseActivity.notifyAppWidgets(mainActivity); // 发送数据更新广播，驱动桌面小部件重新读取数据库并渲染
           } else {
             goHome();
           }
-        }).build().show();
+        }).build().show(); // 把刚才这段长长的逻辑绑定到弹窗的“确定”按钮上，构建出弹窗实体，并在屏幕上弹出来。
   }
-
+  /**
+   * @description 归档或取消归档当前便签（新便签直接返回，否则保存并退出）。
+   * @why 复用同一方法通过 archive 参数双向控制归档状态，避免归档/取消归档两套重复逻辑。
+   */
   @SuppressLint("NewApi")
   private void archiveNote(boolean archive) {
     // Simply go back if is a new note
@@ -1796,9 +1817,9 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       return;
     }
 
-    noteTmp.setArchived(archive);
+    noteTmp.setArchived(archive);  // 一个方法就同时处理了“归档”和“取消归档”两个相反的动作
     goBack = true;
-    exitMessage = archive ? getString(R.string.note_archived) : getString(R.string.note_unarchived);
+    exitMessage = archive ? getString(R.string.note_archived) : getString(R.string.note_unarchived); //  使用三元运算符动态判断：如果是归档（true），记录“已归档”文案；否则记录“已取消归档”文案。
     exitCroutonStyle = archive ? ONStyle.WARN : ONStyle.INFO;
     saveNote();
   }
@@ -1813,27 +1834,30 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 
     noteTmp.setTrashed(trash);
     goBack = true;
-    exitMessage = trash ? getString(R.string.note_trashed) : getString(R.string.note_untrashed);
-    exitCroutonStyle = trash ? ONStyle.WARN : ONStyle.INFO;
-    if (trash) {
-      ShortcutHelper.removeShortcut(getAppContext(), noteTmp);
-      ReminderHelper.removeReminder(getAppContext(), noteTmp);
-    } else {
-      ReminderHelper.addReminder(getAppContext(), note);
+    exitMessage = trash ? getString(R.string.note_trashed) : getString(R.string.note_untrashed); // 根据 trash 取值，通过三元运算符选择对应的字符串资源，赋值给退出提示文案字段 exitMessage
+    exitCroutonStyle = trash ? ONStyle.WARN : ONStyle.INFO; // 根据 trash 选择 Crouton 提示条样式：true 用 ONStyle.WARN（警示），false 用 ONStyle.INFO（信息），与 exitMessage 配套使用。
+    if (trash) {// 如果是删除
+      ShortcutHelper.removeShortcut(getAppContext(), noteTmp); // 取消快捷方式图标
+      ReminderHelper.removeReminder(getAppContext(), noteTmp); // 取消系统闹钟
+    } else { // 如果是便签被捞回来了
+      ReminderHelper.addReminder(getAppContext(), note); // 调用 ReminderHelper.addReminder 重新注册提醒；传入 note（原始持久化对象）而非 noteTmp，确保还原时使用的是数据库中的提醒配置
     }
     saveNote();
   }
-
+  /**
+   * @description 彻底永久删除当前便签。
+   * @why 通过二次确认弹窗防止误触，确认后委托主界面执行物理销毁，并记录日志、反馈红色警告及关闭当前页面。
+   */
   private void deleteNote() {
-    new MaterialDialog.Builder(mainActivity)
+    new MaterialDialog.Builder(mainActivity)  // 防误触，使用 MaterialDialog 构建器实例化确认弹窗
         .content(R.string.delete_note_confirmation)
         .positiveText(R.string.ok)
-        .onPositive((dialog, which) -> {
+        .onPositive((dialog, which) -> { // 如果点击了OK,就执行代码
           mainActivity.deleteNote(noteTmp);
-          LogDelegate.d("Deleted note with ID '" + noteTmp.get_id() + "'");
-          mainActivity.showMessage(R.string.note_deleted, ONStyle.ALERT);
+          LogDelegate.d("Deleted note with ID '" + noteTmp.get_id() + "'"); // 后台控制台记录
+          mainActivity.showMessage(R.string.note_deleted, ONStyle.ALERT); // 弹出红色删除成功提示
           goHome();
-        }).build().show();
+        }).build().show(); // 渲染并显示弹窗
   }
 
   public void saveAndExit() {
