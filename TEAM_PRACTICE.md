@@ -88,7 +88,7 @@
     * 罗丹丹：完成 Security.kt、ReminderHelper.java、SaveNoteTask.java 的精读任务，并了解各个方法块的作用。
 *  **11月5日**：
     * 黄秀：
-    * 罗丹丹：
+    * 罗丹丹：精读 Stats/Note/Category/Tag，了解每个板块或者方法块的作用，并完善了质量分析报告。
 *  **11月6日**：
     * 黄秀：
     * 罗丹丹：
