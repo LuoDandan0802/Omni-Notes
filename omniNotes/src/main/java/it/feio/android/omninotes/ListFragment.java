@@ -16,6 +16,7 @@
  */
 package it.feio.android.omninotes;
 
+///导入部分，把需要的东西搬出来。import static ...：静态导入；androidx.recyclerview...：引入了列表视图、分割线、滑动控制等核心 UI 组件；de.greenrobot.event.EventBus：引入了事件总线
 import static android.content.DialogInterface.BUTTON_POSITIVE;
 import static android.text.Html.fromHtml;
 import static android.text.TextUtils.isEmpty;
@@ -136,13 +137,13 @@ import org.apache.commons.lang3.ObjectUtils;
 
 public class ListFragment extends BaseFragment implements OnViewTouchedListener,
     UndoBarController.UndoListener {
-
+  ///  这是常量与请求码，方便身份区分和防止串线
   private static final int REQUEST_CODE_CATEGORY = 1;
   private static final int REQUEST_CODE_CATEGORY_NOTES = 2;
   private static final int REQUEST_CODE_ADD_ALARMS = 3;
   public static final String LIST_VIEW_POSITION = "listViewPosition";
   public static final String LIST_VIEW_POSITION_OFFSET = "listViewPositionOffset";
-
+ ///核心 UI 与状态对象
   private FragmentListBinding binding;
 
   private final List<Note> selectedNotes = new ArrayList<>();
@@ -150,6 +151,8 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
   private MenuItem searchMenuItem;
   private Menu menu;
   private AnimationDrawable jinglesAnimation;
+
+    /// 列表滑动与 ActionMode（多选模式），listViewPosition表示列表滚动位置，当点进某一便签退出时自动回滚到此便签；actionMode指上下文操作栏，长按便签时出现顶部标题栏（删除。归档）
   private int listViewPosition;
   private int listViewPositionOffset = 16;
   private boolean sendToArchive;
@@ -158,6 +161,7 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
   private boolean keepActionMode = false;
 
   // Undo archive/trash
+  /// 撤销（Undo）机制的数据结构
   private boolean undoTrash = false;
   private boolean undoArchive = false;
   private boolean undoCategorize = false;
@@ -169,21 +173,29 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
   private final Map<Note, Boolean> undoArchivedMap = new HashMap<>();
 
   // Search variables
+  ///搜索状态记忆
   private String searchQuery;
   private String searchQueryInstant;
   private String searchTags;
   private boolean searchUncompleteChecklists;
   private boolean goBackOnToggleSearchLabel = false;
   private boolean searchLabelActive = false;
+    ///适配器与控制器
+  private NoteAdapter listAdapter;  // 把 Note 数据变成屏幕上能看见的卡片
+  private UndoBarController ubc;  // 控制底部“撤销”条的弹出和隐藏
+  private Fab fab;   // 右下角那个可以展开的悬浮按钮（新建便签、拍照等）
+  private MainActivity mainActivity;   // 宿主 Activity 的引用
 
-  private NoteAdapter listAdapter;
-  private UndoBarController ubc;
-  private Fab fab;
-  private MainActivity mainActivity;
-
-
+    /**
+     * @description Fragment 生命周期初始化回调，用于设置基础状态、菜单权限及事件总线注册。
+     * @why
+     * 1. 保存当前实例引用 (mFragment) 供内部调用；
+     * 2. 开启菜单支持以便渲染列表页的排序/搜索按钮；
+     * 3. 开启状态保留 (setRetainInstance)，防止横竖屏切换导致列表数据重新加载；
+     * 4. 注册 EventBus 并设置高优先级，监听便签加载、分类更新等全局事件。
+     */
   @Override
-  public void onCreate(Bundle savedInstanceState) {
+  public void onCreate(Bundle savedInstanceState) { // 当 Fragment 被创建时，系统会最先调用这个方法
     super.onCreate(savedInstanceState);
     mFragment = this;
     setHasOptionsMenu(true);
@@ -191,60 +203,74 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
     EventBus.getDefault().register(this, 1);
   }
 
-
+    /**
+     * @description Fragment 生命周期销毁回调，负责资源清理与事件总线注销。
+     * @why 必须与 onCreate 中的注册操作严格配对，调用 unregister 注销 EventBus，否则该 Fragment 实例会被 EventBus 持续持有，导致无法被 GC 回收（内存泄漏），甚至在页面销毁后触发空指针异常。
+     */
   @Override
-  public void onDestroy() {
+  public void onDestroy() {  // 生命周期的终点
     super.onDestroy();
-    EventBus.getDefault().unregister(this);
+    EventBus.getDefault().unregister(this); //从 EventBus 观察者池中移除当前对象，与 onCreate 中的 register 严格成对出现，释放引用
   }
 
 
   @Override
+  /**
+   * @description 实例化并配置列表页的视图层级，包括状态恢复、RecyclerView 驱动绑定及视觉特效。
+   * @why
+   * 状态恢复：从 savedInstanceState 中恢复滚动位置与搜索条件，确保横竖屏切换后状态无缝衔接；
+   * 核心配置：初始化 ViewBinding 获取根视图，为列表挂载排版经理（LayoutManager）、分割线（ItemDecoration）与增删动画（ItemAnimator）；
+   * 体验优化：开启固定尺寸提升渲染性能，并绑定 EmptyView 以在无数据时展示占位图。
+   * 把写好的 XML 布局文件“变成”屏幕上真实存在的控件，并且为底层的列表（RecyclerView）配置好所有必备的“零件”
+   */
   public View onCreateView(LayoutInflater inflater, ViewGroup container,
       Bundle savedInstanceState) {
     if (savedInstanceState != null) {
-      if (savedInstanceState.containsKey(LIST_VIEW_POSITION)) {
-        listViewPosition = savedInstanceState.getInt(LIST_VIEW_POSITION);
-        listViewPositionOffset = savedInstanceState.getInt(LIST_VIEW_POSITION_OFFSET);
-        searchQuery = savedInstanceState.getString("searchQuery");
-        searchTags = savedInstanceState.getString("searchTags");
+      if (savedInstanceState.containsKey(LIST_VIEW_POSITION)) { //检查 Bundle 对象中是否包含键为 LIST_VIEW_POSITION（值为 "listViewPosition"）的数据，防止空指针异常
+        listViewPosition = savedInstanceState.getInt(LIST_VIEW_POSITION); //恢复列表滚到了第几行
+        listViewPositionOffset = savedInstanceState.getInt(LIST_VIEW_POSITION_OFFSET);  // istViewPositionOffset = savedInstanceState.getInt(LIST_VIEW_POSITION_OFFSET);
+        searchQuery = savedInstanceState.getString("searchQuery"); // 恢复当前的搜索过滤词
+        searchTags = savedInstanceState.getString("searchTags"); // 从 Bundle 中读取字符串数据，恢复当前的搜索标签
       }
-      keepActionMode = false;
+      keepActionMode = false; // 防止页面错乱和内存泄漏。只要屏幕一转，不管之前是不是多选状态，统统给我退出多选，恢复成普通的列表
     }
-    binding = FragmentListBinding.inflate(inflater, container, false);
-    View view = binding.getRoot();
+    binding = FragmentListBinding.inflate(inflater, container, false); // 参数 false 表示暂不将该视图添加到父容器 container 中，交由 Fragment 生命周期管理。把 fragment_list.xml 这个图纸实例化
+    View view = binding.getRoot(); // 拿到根视图，相当于拿到所有的内容
 
-    binding.list.setHasFixedSize(true);
+    binding.list.setHasFixedSize(true); // 标记 RecyclerView 的尺寸为固定大小，所以每次添加内容时都不用再重新量宽高了
     LinearLayoutManager linearLayoutManager = new LinearLayoutManager(getContext());
-    binding.list.setLayoutManager(linearLayoutManager);
+    binding.list.setLayoutManager(linearLayoutManager); // 将线性排版管理器绑定到 RecyclerView
 
-    DividerItemDecoration dividerItemDecoration = new DividerItemDecoration(
+    DividerItemDecoration dividerItemDecoration = new DividerItemDecoration( // DividerItemDecoration 是 Android 提供的一个专门负责画分割线的“刷子”，你需要去哪面墙上面画画，划线的方向是横着还是竖着
         binding.list.getContext(),
         linearLayoutManager.getOrientation());
     dividerItemDecoration
-        .setDrawable(getResources().getDrawable(R.drawable.fragment_list_item_divider));
-    binding.list.addItemDecoration(dividerItemDecoration);
+        .setDrawable(getResources().getDrawable(R.drawable.fragment_list_item_divider)); //设置线条样式，调用 setDrawable(Drawable) 方法为装饰器设置用于绘制的图形对象
+    binding.list.addItemDecoration(dividerItemDecoration); //将 ItemDecoration 实例注册到 RecyclerView 中
 
-    RecyclerView.ItemAnimator itemAnimator = new DefaultItemAnimator();
-    itemAnimator.setAddDuration(1000);
-    itemAnimator.setRemoveDuration(1000);
-    binding.list.setItemAnimator(itemAnimator);
+    RecyclerView.ItemAnimator itemAnimator = new DefaultItemAnimator(); // RecyclerView 内置了动画系统，指定执行者，负责管理以后列表卡片的出现、消失、移动时的特效
+    itemAnimator.setAddDuration(1000); // 设置 Item 被添加到列表时的动画持续时间为 1000 毫秒
+    itemAnimator.setRemoveDuration(1000); // 设置 Item 从列表中移除时的动画持续时间为 1000 毫秒
+    binding.list.setItemAnimator(itemAnimator); // 将配置好的 ItemAnimator（执行者） 绑定到 RecyclerView 实例上，以后的列表的增删就归这名执行者指挥了
 
     // Replace listview with Mr. Jingles if it is empty
-    binding.list.setEmptyView(binding.emptyList);
+    binding.list.setEmptyView(binding.emptyList); // 如果列表为空，，就显示emptyView（通常为图片或者文字）
 
     return view;
   }
 
-
+    /**
+     * @description 宿主 Activity 就绪后的回调，负责获取宿主引用、恢复临时导航状态并启动核心业务初始化。
+     * @why 利用 Activity 完全建好的黄金节点，确保组件交互安全，并防止屏幕旋转导致从 Widget 进入的上下文丢失，最后通过 init() 正式拉起列表加载。
+     */
   @Override
   public void onActivityCreated(Bundle savedInstanceState) {
     super.onActivityCreated(savedInstanceState);
-    mainActivity = (MainActivity) getActivity();
+    mainActivity = (MainActivity) getActivity(); //通过 getActivity() 获取与当前 Fragment 关联的宿主 Activity
     if (mainActivity!= null && savedInstanceState != null) {
-      mainActivity.navigationTmp = savedInstanceState.getString("navigationTmp");
+      mainActivity.navigationTmp = savedInstanceState.getString("navigationTmp");//从 Bundle 中取出临时导航标记，重新塞回给 MainActivity，防止 Widget 跳转状态丢失
     }
-    init();
+    init(); // 启动
   }
 
 
