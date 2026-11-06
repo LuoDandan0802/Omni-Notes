@@ -822,48 +822,62 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
   /**
    * Performs one of the ActionBar button's actions after checked notes protection
    */
+    /**
+     * @description 列表页菜单动作的路由分发中心，根据当前模式分发普通操作或批量操作。
+     * @why
+     * 1. 统一收口防抖校验，防止用户高频连点引发重复弹窗或数据并发冲突；
+     * 2. 通过 actionMode 状态实现双重路由：null 走单条/全局过滤导航，非 null 走多选批量处理；
+     * 3. 末尾统一拦截排序子菜单点击，避免 switch 分支过度臃肿，保持代码整洁。
+     */
   public void performAction(MenuItem item, ActionMode actionMode) {
-    if (isOptionsItemFastClick()) {
+    if (isOptionsItemFastClick()) { // 就是防止用户疯狂点击。该方法内部通过记录上一次点击的时间戳，与当前系统时间对比，若间隔小于设定的阈值（1秒），则判定为无效的快速点击，直接 return 终止方法执行，从而保证 UI 交互的幂等性与安全性
       return;
     }
 
     if (actionMode == null) {
       switch (item.getItemId()) {
-        case android.R.id.home:
+        case android.R.id.home: // android.R.id.home 是 Android 系统自带的“左上角主页/返回”按钮的专属 ID
+         // 取反，如果左上角是打开的，再次点击就需要关闭，如果是关闭的，下次点击就需要打开
           if (mainActivity.getDrawerLayout().isDrawerOpen(GravityCompat.START)) {
             mainActivity.getDrawerLayout().closeDrawer(GravityCompat.START);
           } else {
             mainActivity.getDrawerLayout().openDrawer(GravityCompat.START);
           }
           break;
+          /// 提醒过滤开关（成对出现）
         case R.id.menu_filter:
           filterReminders(true);
           break;
         case R.id.menu_filter_remove:
           filterReminders(false);
           break;
+          /// 分类归档过滤开关（成对出现）
         case R.id.menu_filter_category:
           filterCategoryArchived(true);
           break;
         case R.id.menu_filter_category_remove:
           filterCategoryArchived(false);
           break;
+          /// 未完成清单过滤
         case R.id.menu_uncomplete_checklists:
           item.setVisible(false);
           filterByUncompleteChecklists();
           break;
+          /// 标签过滤与排序
         case R.id.menu_tags:
           filterByTags();
           break;
         case R.id.menu_sort:
           initSortingSubmenu();
           break;
+          /// 视图切换（展开/收缩）
         case R.id.menu_expanded_view:
           switchNotesView();
           break;
         case R.id.menu_contracted_view:
           switchNotesView();
           break;
+          /// 清空回收站
         case R.id.menu_empty_trash:
           emptyTrash();
           break;
@@ -875,18 +889,21 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
       }
     } else {
       switch (item.getItemId()) {
+          /// 批量修改分类与标签
         case R.id.menu_category:
           categorizeNotes();
           break;
         case R.id.menu_tags:
           tagNotes();
           break;
+          /// 分享与合并
         case R.id.menu_share:
           share();
           break;
         case R.id.menu_merge:
           merge();
           break;
+          /// 批量归档与回收站操作（成对出现）
         case R.id.menu_archive:
           archiveNotes(true);
           break;
@@ -899,9 +916,11 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
         case R.id.menu_untrash:
           trashNotes(false);
           break;
+          ///彻底删除
         case R.id.menu_delete:
           deleteNotes();
           break;
+          ///全选与批量设置提醒
         case R.id.menu_select_all:
           selectAllNotes();
           break;
@@ -916,7 +935,7 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
       }
     }
 
-    checkSortActionPerformed(item);
+    checkSortActionPerformed(item); //统一检查并处理排序子菜单的点击事件。
   }
 
 
