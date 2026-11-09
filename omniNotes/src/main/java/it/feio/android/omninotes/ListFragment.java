@@ -16,6 +16,7 @@
  */
 package it.feio.android.omninotes;
 
+///导入部分，把需要的东西搬出来。import static ...：静态导入；androidx.recyclerview...：引入了列表视图、分割线、滑动控制等核心 UI 组件；de.greenrobot.event.EventBus：引入了事件总线
 import static android.content.DialogInterface.BUTTON_POSITIVE;
 import static android.text.Html.fromHtml;
 import static android.text.TextUtils.isEmpty;
@@ -136,13 +137,13 @@ import org.apache.commons.lang3.ObjectUtils;
 
 public class ListFragment extends BaseFragment implements OnViewTouchedListener,
     UndoBarController.UndoListener {
-
+  ///  这是常量与请求码，方便身份区分和防止串线
   private static final int REQUEST_CODE_CATEGORY = 1;
   private static final int REQUEST_CODE_CATEGORY_NOTES = 2;
   private static final int REQUEST_CODE_ADD_ALARMS = 3;
   public static final String LIST_VIEW_POSITION = "listViewPosition";
   public static final String LIST_VIEW_POSITION_OFFSET = "listViewPositionOffset";
-
+ ///核心 UI 与状态对象
   private FragmentListBinding binding;
 
   private final List<Note> selectedNotes = new ArrayList<>();
@@ -150,6 +151,8 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
   private MenuItem searchMenuItem;
   private Menu menu;
   private AnimationDrawable jinglesAnimation;
+
+    /// 列表滑动与 ActionMode（多选模式），listViewPosition表示列表滚动位置，当点进某一便签退出时自动回滚到此便签；actionMode指上下文操作栏，长按便签时出现顶部标题栏（删除。归档）
   private int listViewPosition;
   private int listViewPositionOffset = 16;
   private boolean sendToArchive;
@@ -158,6 +161,7 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
   private boolean keepActionMode = false;
 
   // Undo archive/trash
+  /// 撤销（Undo）机制的数据结构
   private boolean undoTrash = false;
   private boolean undoArchive = false;
   private boolean undoCategorize = false;
@@ -169,21 +173,29 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
   private final Map<Note, Boolean> undoArchivedMap = new HashMap<>();
 
   // Search variables
+  ///搜索状态记忆
   private String searchQuery;
   private String searchQueryInstant;
   private String searchTags;
   private boolean searchUncompleteChecklists;
   private boolean goBackOnToggleSearchLabel = false;
   private boolean searchLabelActive = false;
+    ///适配器与控制器
+  private NoteAdapter listAdapter;  // 把 Note 数据变成屏幕上能看见的卡片
+  private UndoBarController ubc;  // 控制底部“撤销”条的弹出和隐藏
+  private Fab fab;   // 右下角那个可以展开的悬浮按钮（新建便签、拍照等）
+  private MainActivity mainActivity;   // 宿主 Activity 的引用
 
-  private NoteAdapter listAdapter;
-  private UndoBarController ubc;
-  private Fab fab;
-  private MainActivity mainActivity;
-
-
+    /**
+     * @description Fragment 生命周期初始化回调，用于设置基础状态、菜单权限及事件总线注册。
+     * @why
+     * 1. 保存当前实例引用 (mFragment) 供内部调用；
+     * 2. 开启菜单支持以便渲染列表页的排序/搜索按钮；
+     * 3. 开启状态保留 (setRetainInstance)，防止横竖屏切换导致列表数据重新加载；
+     * 4. 注册 EventBus 并设置高优先级，监听便签加载、分类更新等全局事件。
+     */
   @Override
-  public void onCreate(Bundle savedInstanceState) {
+  public void onCreate(Bundle savedInstanceState) { // 当 Fragment 被创建时，系统会最先调用这个方法
     super.onCreate(savedInstanceState);
     mFragment = this;
     setHasOptionsMenu(true);
@@ -191,60 +203,74 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
     EventBus.getDefault().register(this, 1);
   }
 
-
+    /**
+     * @description Fragment 生命周期销毁回调，负责资源清理与事件总线注销。
+     * @why 必须与 onCreate 中的注册操作严格配对，调用 unregister 注销 EventBus，否则该 Fragment 实例会被 EventBus 持续持有，导致无法被 GC 回收（内存泄漏），甚至在页面销毁后触发空指针异常。
+     */
   @Override
-  public void onDestroy() {
+  public void onDestroy() {  // 生命周期的终点
     super.onDestroy();
-    EventBus.getDefault().unregister(this);
+    EventBus.getDefault().unregister(this); //从 EventBus 观察者池中移除当前对象，与 onCreate 中的 register 严格成对出现，释放引用
   }
 
 
   @Override
+  /**
+   * @description 实例化并配置列表页的视图层级，包括状态恢复、RecyclerView 驱动绑定及视觉特效。
+   * @why
+   * 状态恢复：从 savedInstanceState 中恢复滚动位置与搜索条件，确保横竖屏切换后状态无缝衔接；
+   * 核心配置：初始化 ViewBinding 获取根视图，为列表挂载排版经理（LayoutManager）、分割线（ItemDecoration）与增删动画（ItemAnimator）；
+   * 体验优化：开启固定尺寸提升渲染性能，并绑定 EmptyView 以在无数据时展示占位图。
+   * 把写好的 XML 布局文件“变成”屏幕上真实存在的控件，并且为底层的列表（RecyclerView）配置好所有必备的“零件”
+   */
   public View onCreateView(LayoutInflater inflater, ViewGroup container,
       Bundle savedInstanceState) {
     if (savedInstanceState != null) {
-      if (savedInstanceState.containsKey(LIST_VIEW_POSITION)) {
-        listViewPosition = savedInstanceState.getInt(LIST_VIEW_POSITION);
-        listViewPositionOffset = savedInstanceState.getInt(LIST_VIEW_POSITION_OFFSET);
-        searchQuery = savedInstanceState.getString("searchQuery");
-        searchTags = savedInstanceState.getString("searchTags");
+      if (savedInstanceState.containsKey(LIST_VIEW_POSITION)) { //检查 Bundle 对象中是否包含键为 LIST_VIEW_POSITION（值为 "listViewPosition"）的数据，防止空指针异常
+        listViewPosition = savedInstanceState.getInt(LIST_VIEW_POSITION); //恢复列表滚到了第几行
+        listViewPositionOffset = savedInstanceState.getInt(LIST_VIEW_POSITION_OFFSET);  // istViewPositionOffset = savedInstanceState.getInt(LIST_VIEW_POSITION_OFFSET);
+        searchQuery = savedInstanceState.getString("searchQuery"); // 恢复当前的搜索过滤词
+        searchTags = savedInstanceState.getString("searchTags"); // 从 Bundle 中读取字符串数据，恢复当前的搜索标签
       }
-      keepActionMode = false;
+      keepActionMode = false; // 防止页面错乱和内存泄漏。只要屏幕一转，不管之前是不是多选状态，统统给我退出多选，恢复成普通的列表
     }
-    binding = FragmentListBinding.inflate(inflater, container, false);
-    View view = binding.getRoot();
+    binding = FragmentListBinding.inflate(inflater, container, false); // 参数 false 表示暂不将该视图添加到父容器 container 中，交由 Fragment 生命周期管理。把 fragment_list.xml 这个图纸实例化
+    View view = binding.getRoot(); // 拿到根视图，相当于拿到所有的内容
 
-    binding.list.setHasFixedSize(true);
+    binding.list.setHasFixedSize(true); // 标记 RecyclerView 的尺寸为固定大小，所以每次添加内容时都不用再重新量宽高了
     LinearLayoutManager linearLayoutManager = new LinearLayoutManager(getContext());
-    binding.list.setLayoutManager(linearLayoutManager);
+    binding.list.setLayoutManager(linearLayoutManager); // 将线性排版管理器绑定到 RecyclerView
 
-    DividerItemDecoration dividerItemDecoration = new DividerItemDecoration(
+    DividerItemDecoration dividerItemDecoration = new DividerItemDecoration( // DividerItemDecoration 是 Android 提供的一个专门负责画分割线的“刷子”，你需要去哪面墙上面画画，划线的方向是横着还是竖着
         binding.list.getContext(),
         linearLayoutManager.getOrientation());
     dividerItemDecoration
-        .setDrawable(getResources().getDrawable(R.drawable.fragment_list_item_divider));
-    binding.list.addItemDecoration(dividerItemDecoration);
+        .setDrawable(getResources().getDrawable(R.drawable.fragment_list_item_divider)); //设置线条样式，调用 setDrawable(Drawable) 方法为装饰器设置用于绘制的图形对象
+    binding.list.addItemDecoration(dividerItemDecoration); //将 ItemDecoration 实例注册到 RecyclerView 中
 
-    RecyclerView.ItemAnimator itemAnimator = new DefaultItemAnimator();
-    itemAnimator.setAddDuration(1000);
-    itemAnimator.setRemoveDuration(1000);
-    binding.list.setItemAnimator(itemAnimator);
+    RecyclerView.ItemAnimator itemAnimator = new DefaultItemAnimator(); // RecyclerView 内置了动画系统，指定执行者，负责管理以后列表卡片的出现、消失、移动时的特效
+    itemAnimator.setAddDuration(1000); // 设置 Item 被添加到列表时的动画持续时间为 1000 毫秒
+    itemAnimator.setRemoveDuration(1000); // 设置 Item 从列表中移除时的动画持续时间为 1000 毫秒
+    binding.list.setItemAnimator(itemAnimator); // 将配置好的 ItemAnimator（执行者） 绑定到 RecyclerView 实例上，以后的列表的增删就归这名执行者指挥了
 
     // Replace listview with Mr. Jingles if it is empty
-    binding.list.setEmptyView(binding.emptyList);
+    binding.list.setEmptyView(binding.emptyList); // 如果列表为空，，就显示emptyView（通常为图片或者文字）
 
     return view;
   }
 
-
+    /**
+     * @description 宿主 Activity 就绪后的回调，负责获取宿主引用、恢复临时导航状态并启动核心业务初始化。
+     * @why 利用 Activity 完全建好的黄金节点，确保组件交互安全，并防止屏幕旋转导致从 Widget 进入的上下文丢失，最后通过 init() 正式拉起列表加载。
+     */
   @Override
   public void onActivityCreated(Bundle savedInstanceState) {
     super.onActivityCreated(savedInstanceState);
-    mainActivity = (MainActivity) getActivity();
+    mainActivity = (MainActivity) getActivity(); //通过 getActivity() 获取与当前 Fragment 关联的宿主 Activity
     if (mainActivity!= null && savedInstanceState != null) {
-      mainActivity.navigationTmp = savedInstanceState.getString("navigationTmp");
+      mainActivity.navigationTmp = savedInstanceState.getString("navigationTmp");//从 Bundle 中取出临时导航标记，重新塞回给 MainActivity，防止 Widget 跳转状态丢失
     }
-    init();
+    init(); // 启动
   }
 
 
@@ -796,48 +822,62 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
   /**
    * Performs one of the ActionBar button's actions after checked notes protection
    */
+    /**
+     * @description 列表页菜单动作的路由分发中心，根据当前模式分发普通操作或批量操作。
+     * @why
+     * 1. 统一收口防抖校验，防止用户高频连点引发重复弹窗或数据并发冲突；
+     * 2. 通过 actionMode 状态实现双重路由：null 走单条/全局过滤导航，非 null 走多选批量处理；
+     * 3. 末尾统一拦截排序子菜单点击，避免 switch 分支过度臃肿，保持代码整洁。
+     */
   public void performAction(MenuItem item, ActionMode actionMode) {
-    if (isOptionsItemFastClick()) {
+    if (isOptionsItemFastClick()) { // 就是防止用户疯狂点击。该方法内部通过记录上一次点击的时间戳，与当前系统时间对比，若间隔小于设定的阈值（1秒），则判定为无效的快速点击，直接 return 终止方法执行，从而保证 UI 交互的幂等性与安全性
       return;
     }
 
     if (actionMode == null) {
       switch (item.getItemId()) {
-        case android.R.id.home:
+        case android.R.id.home: // android.R.id.home 是 Android 系统自带的“左上角主页/返回”按钮的专属 ID
+         // 取反，如果左上角是打开的，再次点击就需要关闭，如果是关闭的，下次点击就需要打开
           if (mainActivity.getDrawerLayout().isDrawerOpen(GravityCompat.START)) {
             mainActivity.getDrawerLayout().closeDrawer(GravityCompat.START);
           } else {
             mainActivity.getDrawerLayout().openDrawer(GravityCompat.START);
           }
           break;
+          /// 提醒过滤开关（成对出现）
         case R.id.menu_filter:
           filterReminders(true);
           break;
         case R.id.menu_filter_remove:
           filterReminders(false);
           break;
+          /// 分类归档过滤开关（成对出现）
         case R.id.menu_filter_category:
           filterCategoryArchived(true);
           break;
         case R.id.menu_filter_category_remove:
           filterCategoryArchived(false);
           break;
+          /// 未完成清单过滤
         case R.id.menu_uncomplete_checklists:
           item.setVisible(false);
           filterByUncompleteChecklists();
           break;
+          /// 标签过滤与排序
         case R.id.menu_tags:
           filterByTags();
           break;
         case R.id.menu_sort:
           initSortingSubmenu();
           break;
+          /// 视图切换（展开/收缩）
         case R.id.menu_expanded_view:
           switchNotesView();
           break;
         case R.id.menu_contracted_view:
           switchNotesView();
           break;
+          /// 清空回收站
         case R.id.menu_empty_trash:
           emptyTrash();
           break;
@@ -849,18 +889,21 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
       }
     } else {
       switch (item.getItemId()) {
+          /// 批量修改分类与标签
         case R.id.menu_category:
           categorizeNotes();
           break;
         case R.id.menu_tags:
           tagNotes();
           break;
+          /// 分享与合并
         case R.id.menu_share:
           share();
           break;
         case R.id.menu_merge:
           merge();
           break;
+          /// 批量归档与回收站操作（成对出现）
         case R.id.menu_archive:
           archiveNotes(true);
           break;
@@ -873,9 +916,11 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
         case R.id.menu_untrash:
           trashNotes(false);
           break;
+          ///彻底删除
         case R.id.menu_delete:
           deleteNotes();
           break;
+          ///全选与批量设置提醒
         case R.id.menu_select_all:
           selectAllNotes();
           break;
@@ -890,7 +935,7 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
       }
     }
 
-    checkSortActionPerformed(item);
+    checkSortActionPerformed(item); //统一检查并处理排序子菜单的点击事件。
   }
 
 
@@ -1041,74 +1086,88 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
    *
    * @FIXME: This method is a divine disgrace and MUST be refactored. I'm ashamed by myself.
    */
+  /**
+   * @description 列表页数据加载的核心调度枢纽。
+   * @why
+   * 负责解析复杂的 Intent 意图与用户交互状态，统一调度数据加载。
+   * 1. 状态恢复：交接并清空瞬间搜索缓存，处理外部 DeepLink 标签唤醒。
+   * 2. 搜索路由：根据关键字、标签、未完成清单等不同维度，利用反射机制异步调用底层查询。
+   * 3. 分类过滤：解析桌面小部件绑定的 SQL 规则或侧边栏选中的分类，精准加载对应数据。
+   * 4. 异步兜底：默认加载全部便签。全程通过 NoteLoaderTask 配合线程池，确保 UI 零阻塞。
+   */
   void initNotesList(Intent intent) {
-    LogDelegate.d("initNotesList intent: " + intent.getAction());
+    LogDelegate.d("initNotesList intent: " + intent.getAction()); // 在底部控制台打印一句话，接了 intent.getAction()，用于在控制台追踪当前 Intent 的 Action 字符串
 
-    binding.progressWheel.setAlpha(1);
-    binding.list.setAlpha(0);
+    binding.progressWheel.setAlpha(1); // 防止用户以为界面卡死了，通过 ViewBinding 获取到进度条控件，调用 setAlpha(1) 将透明度设为完全不透明（可见状态）
+    binding.list.setAlpha(0); // 将 RecyclerView（binding.list）的透明度设置为 0。这是一种防闪烁处理。
 
     // Search for a tag
     // A workaround to simplify it's to simulate normal search
     if (Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getCategories() != null
-        && intent.getCategories().contains(Intent.CATEGORY_BROWSABLE)) {
-      searchTags = intent.getDataString().replace(UrlCompleter.HASHTAG_SCHEME, "");
-      goBackOnToggleSearchLabel = true;
+        && intent.getCategories().contains(Intent.CATEGORY_BROWSABLE)) { // 为了过滤掉那些无效的启动请求。只有当用户是从“能点击的网页链接”跳过来时，才走这段逻辑。
+      searchTags = intent.getDataString().replace(UrlCompleter.HASHTAG_SCHEME, ""); // 通过 getDataString() 获取完整的 URI 字符串。
+      goBackOnToggleSearchLabel = true; // 这是一个状态标记，供后续用户点击取消搜索或物理返回键时，代码根据此标记判断是直接 finish() 结束 Activity（返回外部来源），还是仅清除搜索状态并回到主列表。
     }
 
-    if (ACTION_SHORTCUT_WIDGET.equals(intent.getAction())) {
-      return;
+    if (ACTION_SHORTCUT_WIDGET.equals(intent.getAction())) { // 检查一下，用户是不是点击了桌面上的“快捷方式小部件”（比如直接新建便签的快捷图标）进来的
+      return; // 如果是，直接退出
     }
 
     // Searching
-    searchQuery = searchQueryInstant;
-    searchQueryInstant = null;
+    searchQuery = searchQueryInstant; // 从临时缓存中提取搜索词，恢复当前的搜索状态
+    searchQueryInstant = null;  // 阅后即焚：交接完后立刻清空临时变量。
+    //判断当前是否处于任何一种搜索/过滤状态。
     if (searchTags != null || searchQuery != null || searchUncompleteChecklists
         || IntentChecker
         .checkAction(intent, Intent.ACTION_SEARCH, ACTION_SEARCH_UNCOMPLETE_CHECKLISTS)) {
 
       // Using tags
+      // 判断是否单纯基于标签进行搜索
       if (searchTags != null && intent.getStringExtra(SearchManager.QUERY) == null) {
-        searchQuery = searchTags;
+        searchQuery = searchTags; // // 将标签名赋给统一查询变量，方便后续顶部提示条显示“搜索：xxx”
         NoteLoaderTask.getInstance()
             .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getNotesByTag",
-                searchQuery);
+                searchQuery); // 分线程在数据库中查getNotesByTag，NoteLoaderTask 拿到这个字符串后，会在后台偷偷找到 DbHelper 类，看看里面有没有叫 getNotesByTag 的方法，有的话就动态执行它，把结果查出来
       } else if (searchUncompleteChecklists || ACTION_SEARCH_UNCOMPLETE_CHECKLISTS.equals(
-          intent.getAction())) {
-        searchQuery = getContext().getResources().getString(R.string.uncompleted_checklists);
+          intent.getAction())) { // // 检查一下用户是不是点了菜单里的“筛选未完成清单”或者是系统发来了一个专门的 Intent 要求看未完成清单
+        searchQuery = getContext().getResources().getString(R.string.uncompleted_checklists);//通过 Resources 获取本地化字符串，赋值给全局变量 searchQuery
         searchUncompleteChecklists = true;
         NoteLoaderTask.getInstance()
-            .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getNotesByUncompleteChecklist");
-      } else {
+            .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getNotesByUncompleteChecklist");//getInstance()：保证单例，防止并发查询冲突。
+      } else {                                                                                         //executeOnExecutor(..., "getNotesByUncompleteChecklist")：将任务扔进线程池。这里的字符串依然是反射调用的方法名，NoteLoaderTask 内部会利用反射机制去 DbHelper 里寻找对应的方法并执行。
         // Get the intent, verify the action and get the query
-        if (intent.getStringExtra(SearchManager.QUERY) != null) {
-          searchQuery = intent.getStringExtra(SearchManager.QUERY);
+        if (intent.getStringExtra(SearchManager.QUERY) != null) {  //  校验 Intent 中是否携带了系统标准的搜索关键字（SearchManager.QUERY）
+          searchQuery = intent.getStringExtra(SearchManager.QUERY); // 将搜索关键字存入全局状态变量 searchQuery，以便后续异步任务（
           searchTags = null;
         }
         NoteLoaderTask.getInstance()
             .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getNotesByPattern",
-                searchQuery);
+                searchQuery); // 所以调用 "getNotesByPattern"（模式匹配），底层 DbHelper 会将关键字拼接成 SQL 的 `LIKE '%关键字%'` 语句。
       }
 
-      toggleSearchLabel(true);
+      toggleSearchLabel(true); // 立刻在屏幕顶部渲染出“搜索：XXX”的提示条，并激活取消按钮，参数 true 代表“激活并显示搜索标签”，若为 false 则代表收起隐藏。
 
     } else {
       // Check if is launched from a widget with categories
+      // 条件1：是从桌面小部件（Widget）点进来的，且带了小部件的 ID。
+      // 条件2：MainActivity 的 navigationTmp 不为空（说明用户在侧边栏选定了特定分类）。
       if ((ACTION_WIDGET_SHOW_LIST.equals(intent.getAction()) && intent.hasExtra(INTENT_WIDGET))
           || !isEmpty(mainActivity.navigationTmp)) {
+        // 使用三元运算符判断是否携带了 Widget ID。如果带了就取出来，没带（比如从侧边栏进来的）就赋值为 null。
         String widgetId =
             intent.hasExtra(INTENT_WIDGET) ? intent.getExtras().get(INTENT_WIDGET).toString()
                 : null;
         if (widgetId != null) {
-          String sqlCondition = Prefs.getString(PREF_WIDGET_PREFIX + widgetId, "");
-          String categoryId = TextHelper.checkIntentCategory(sqlCondition);
+          String sqlCondition = Prefs.getString(PREF_WIDGET_PREFIX + widgetId, ""); // 拿到这串配置字符串。这串字符串通常是一句 SQL 语句
+          String categoryId = TextHelper.checkIntentCategory(sqlCondition); // 调用自定义的 TextHelper.checkIntentCategory() 方法，利用正则表达式解析 sqlCondition 字符串
           mainActivity.navigationTmp = !isEmpty(categoryId) ? categoryId : null;
         }
         intent.removeExtra(INTENT_WIDGET);
         if (mainActivity.navigationTmp != null) {
           Long categoryId = Long.parseLong(mainActivity.navigationTmp);
           NoteLoaderTask.getInstance().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR,
-              "getNotesByCategory", categoryId);
-        } else {
+              "getNotesByCategory", categoryId); // 用三元运算符（? :）进行状态赋值。如果 categoryId 有效，则赋给主界面的 navigationTmp 暂存；否则置为 null
+        } else { // 如果前面所有的特殊情况（搜索、标签、小部件、分类）都没有命中，那就默认去数据库里把所有便签都查出来，展示给用户看
           NoteLoaderTask.getInstance()
               .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, "getAllNotes", true);
         }
@@ -1195,12 +1254,20 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
               listAdapter.notifyItemChanged(i);
             }));
   }
-
+  /**
+   * @description 初始化 RecyclerView 的左右滑动交互手势（ItemTouchHelper）。
+   * @why
+   * 1. 规则定义：通过 SimpleCallback 设定仅允许左右滑动，禁用上下拖拽（防排序错乱）。
+   * 2. 业务派发：在 onSwiped 中捕获滑动索引，退出多选模式后交由 swipeNote 处理归档/删除逻辑。
+   * 3. 动态挂载：仅在非“未分类”视图且用户开启滑动偏好时，才绑定手势；否则传入 null 禁用。
+   */
   private void initSwipeGesture() {
+    // ：实例化 ItemTouchHelper.SimpleCallback。dragDirs 设为 0 禁用长按拖拽；swipeDirs 传入按位或运算的 LEFT | RIGHT，允许双向滑动。
     ItemTouchHelper.SimpleCallback simpleItemTouchCallback = new ItemTouchHelper.SimpleCallback(0,
         ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT) {
 
       @Override
+      //重写 onMove 方法并返回 false。由于我们只需要滑动功能（Swipe），不需要拖拽功能（Drag），所以直接拦截拖拽事件，防止列表项错位。
       public boolean onMove(@NonNull RecyclerView recyclerView,
           @NonNull RecyclerView.ViewHolder viewHolder,
           @NonNull RecyclerView.ViewHolder target) {
@@ -1208,6 +1275,7 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
       }
 
       @Override
+      /// 在 onSwiped 回调中，通过 getAdapterPosition() 获取数据索引。先调用 finishActionMode() 清理多选状态，再调用自定义的 swipeNote() 方法，将滑动位置传入，由业务层决定是执行归档还是移入回收站
       public void onSwiped(RecyclerView.ViewHolder viewHolder, int swipeDir) {
         int swipedPosition = viewHolder.getAdapterPosition();
         finishActionMode();
@@ -1215,12 +1283,12 @@ public class ListFragment extends BaseFragment implements OnViewTouchedListener,
       }
     };
     ItemTouchHelper itemTouchHelper = new ItemTouchHelper(simpleItemTouchCallback);
-
+    // 动态绑定：只有不在“未分类”下，且用户开启了滑动开关，才让滑动手势生效
     if (Navigation.getNavigation() != Navigation.UNCATEGORIZED && Prefs
         .getBoolean(PREF_ENABLE_SWIPE, true)) {
       itemTouchHelper.attachToRecyclerView(binding.list);
     } else {
-      itemTouchHelper.attachToRecyclerView(null);
+      itemTouchHelper.attachToRecyclerView(null); // // 传入 null 即可禁用滑动
     }
   }
 

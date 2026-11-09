@@ -568,23 +568,42 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     }
   }
 
+  /**
+   * @description 统一解析并处理所有唤醒当前详情页的外部 Intent 意图。
+   * @why
+   * 这是 App 的全局入口调度枢纽。根据不同的 Action（如多选合并、桌面快捷方式、通知栏点击、小部件触发、第三方分享等），
+   * 决定页面的数据加载方式、是否自动弹起键盘以及保存后的退出行为。
+   * 同时在方法末尾清空 Action，防止屏幕旋转导致指令被重复触发。
+   */
   private void handleIntents() {
     Intent i = mainActivity.getIntent();
-
-    if (IntentChecker.checkAction(i, ACTION_MERGE)) {
+    /**
+     * 多选合并便签模式
+     */
+    if (IntentChecker.checkAction(i, ACTION_MERGE)) { // 当用户在列表页勾选多条便签并点击“合并”时，会跳到这里。此时这条新便签在数据库里还不存在。
+      // 初始化两个“占位”的空盒子。
+      // 因为这是全新的合并便签，没有历史数据。造一个空原件(noteOriginal)和空展示件(note)，
+      // 是为了让后续的底层UI和数据对比代码有对象可调用，起到避免空指针异常（防闪退）的兜底作用。
       noteOriginal = new Note();
       note = new Note(noteOriginal);
-      noteTmp = getArguments().getParcelable(INTENT_NOTE);
+      noteTmp = getArguments().getParcelable(INTENT_NOTE);// 从 Fragment 的 Bundle 包裹里，把用户选中的第一条便签（带有真实文字内容）取出来
       if (i.getStringArrayListExtra("merged_notes") != null) {
-        mergedNotesIds = i.getStringArrayListExtra("merged_notes");
+        mergedNotesIds = i.getStringArrayListExtra("merged_notes"); // 除了第一条主便签外，其他被合并的便签（B和C）的 ID 会被系统打包传过来。
       }
     }
-
+    /**
+     * 从桌面快捷方式或通知栏直接进入,展示便签
+     */
     // Action called from home shortcut
-    if (IntentChecker.checkAction(i, ACTION_SHORTCUT, ACTION_NOTIFICATION_CLICK)) {
+    if (IntentChecker.checkAction(i, ACTION_SHORTCUT, ACTION_NOTIFICATION_CLICK)) { // 检查一下，用户是不是点击了桌面快捷方式（ACTION_SHORTCUT），或者点击了通知栏（ACTION_NOTIFICATION_CLICK）进来的
+      // 设定退出行为：保存后直接关闭 App，不返回列表页
       afterSavedReturnsToList = false;
       noteOriginal = DbHelper.getInstance().getNote(i.getLongExtra(INTENT_KEY, 0));
       // Checks if the note pointed from the shortcut has been deleted
+
+      //克隆数据，并进行【防崩溃兜底】。
+      // Why：如果这条便签在用户点击通知的瞬间被别人（或另一台设备）删除了，查出来的原件就是 null。
+      // 直接 new Note(null) 会导致空指针异常闪退。使用 try-catch 捕获异常后，友好提示用户并关闭页面。
       try {
         note = new Note(noteOriginal);
         noteTmp = new Note(noteOriginal);
@@ -593,7 +612,9 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
         mainActivity.finish();
       }
     }
-
+    /**
+     * 【模式三：从桌面小部件 (Widget) 进入】
+     */
     // Check if is launched from a widget
     if (IntentChecker.checkAction(i, ACTION_WIDGET, ACTION_WIDGET_TAKE_PHOTO)) {
 
@@ -602,27 +623,36 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 
       //  with tags to set tag
       if (i.hasExtra(INTENT_WIDGET)) {
+        // 获取当前点击的小部件唯一 ID
         String widgetId = i.getExtras().get(INTENT_WIDGET).toString();
+        // 去偏好设置中，查出这个小部件当初绑定的 SQL 查询条件
         String sqlCondition = Prefs.getString(PREF_WIDGET_PREFIX + widgetId, "");
         String categoryId = TextHelper.checkIntentCategory(sqlCondition);
         if (categoryId != null) {
           Category category;
           try {
             category = DbHelper.getInstance().getCategory(parseLong(categoryId));
+            // 实例化一个草稿便签，并直接给它贴上该分类标签
             noteTmp = new Note();
             noteTmp.setCategory(category);
           } catch (NumberFormatException e) {
-            LogDelegate.e("Category with not-numeric value!", e);
+            LogDelegate.e("Category with not-numeric value!", e); // 如果解析出的不是合法数字，只记日志，不崩溃
           }
         }
       }
 
+      /**
+       * 下面两个if语句的区别：
+       * ACTION_WIDGET_TAKE_PHOTO：用户在手机桌面的 Omni-Notes 小部件上点了相机。
+       *ACTION_FAB_TAKE_PHOTO：用户在 App 内部列表页的悬浮按钮上点了相机。
+       */
       // Sub-action is to take a photo
+      //如果用户是从桌面小部件的相机按钮点进来的，那就立刻帮他把系统相机打开
       if (IntentChecker.checkAction(i, ACTION_WIDGET_TAKE_PHOTO)) {
         takePhoto();
       }
     }
-
+    // 同上，只不过触发源变成了从主页悬浮按钮 (FAB) 快速拍照
     if (IntentChecker.checkAction(i, ACTION_FAB_TAKE_PHOTO)) {
       takePhoto();
     }
@@ -639,12 +669,16 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       }
 
       // Text title
+       // 提取分享内容附带的标题（如网页标题）
       String title = i.getStringExtra(Intent.EXTRA_SUBJECT);
       if (title != null) {
         noteTmp.setTitle(title);
       }
 
       // Text content
+      /**
+       * 提取分享内容的正文，区分【划词处理】与【普通分享】的取值字段差异
+        */
       String content = null;
       if (Intent.ACTION_PROCESS_TEXT.equals(i.getAction())){
         content = i.getStringExtra(Intent.EXTRA_PROCESS_TEXT).toString();
@@ -659,31 +693,38 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       importAttachments(i);
 
     }
-
+    // 大白话：如果用户是从下面的这四种“常规入口”进来的，就需要自动弹起键盘
     if (IntentChecker
         .checkAction(i, Intent.ACTION_MAIN, ACTION_WIDGET_SHOW_LIST, ACTION_SHORTCUT_WIDGET,
             ACTION_WIDGET)) {
       showKeyboard = true;
     }
 
-    i.setAction(null);
+    i.setAction(null); // 阅后即焚：防重放机制
   }
-
+  /**
+   * @description 解析并导入通过第三方应用分享过来的多媒体附件（图片、音视频等）。
+   * @why
+   * 1. 兼容处理：系统分享可能是单个文件(ACTION_SEND)或多个文件(ACTION_SEND_MULTIPLE)，需分别解析 Uri 或 Uri 列表。
+   * 2. 安全校验：必须通过 validatePath 校验路径合法性，防止恶意应用通过 Intent 越权读取本地隐私文件。
+   * 3. 异步加载：通过 AttachmentTask 在后台处理文件的复制与解码，避免阻塞主 UI 线程导致卡顿。
+   */
   private void importAttachments(Intent i) {
-    if (!i.hasExtra(Intent.EXTRA_STREAM)) {
+    if (!i.hasExtra(Intent.EXTRA_STREAM)) { //  如果 Intent 中不包含文件流，说明只是纯文本分享，直接结束
       return;
     }
-
+    // 处理单个文件分享
     if (i.getExtras().get(Intent.EXTRA_STREAM) instanceof Uri) {
       Uri uri = i.getParcelableExtra(Intent.EXTRA_STREAM);
+      // 安全检查 + 特殊兼容（Google Now 分享的音频暂不在此处理）
       // Google Now passes Intent as text but with audio recording attached the case must be handled like this
       if (validatePath(uri.getPath()) && !INTENT_GOOGLE_NOW.equals(i.getAction())) {
         String name = FileHelper.getNameFromUri(mainActivity, uri);
-        new AttachmentTask(this, uri, name, this).execute();
+        new AttachmentTask(this, uri, name, this).execute(); // 开启异步任务，在后台复制文件并生成 Attachment 对象
       }
-    } else {
+    } else { // 处理多个文件
       ArrayList<Uri> uris = i.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
-      for (Uri uriSingle : uris) {
+      for (Uri uriSingle : uris) { // // 逐个校验安全性，逐个开启异步任务
         if (validatePath(uriSingle.getPath())) {
           String name = FileHelper.getNameFromUri(mainActivity, uriSingle);
           new AttachmentTask(this, uriSingle, name, this).execute();
@@ -692,6 +733,11 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     }
   }
 
+  /**
+   * 检查传进来的文件路径是否安全，防止恶意路径攻击
+   * @param path
+   * @return
+   */
   private boolean validatePath(String path) {
     try {
       Security.validatePath(path);
@@ -703,13 +749,23 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   }
 
   @SuppressLint("NewApi")
+  /**
+   * @description 界面视图初始化的总调度方法。
+   * @why
+   * 负责将内存中的便签数据（noteTmp）逐一绑定到屏幕上的各个 UI 控件中。
+   * 为了避免代码臃肿，该方法采用了模块化设计，将复杂的界面拆分为标题、正文、定位、附件、提醒等独立子方法。
+   * 这种“总-分”结构不仅让渲染流程清晰可见，也极大方便了后续针对单一视图模块的独立维护。
+   */
   private void initViews() {
     // Sets onTouchListener to the whole activity to swipe notes
+     // 给整个详情页的最外层套一个“触摸监听”，这个监听器就是用来抓取手指滑动的
     binding.detailRoot.setOnTouchListener(this);
 
     // Color of tag marker if note is tagged a function is active in preferences
+    // // 根据便签的分类，渲染顶部标签的颜色
     setTagMarkerColor(noteTmp.getCategory());
 
+    // 依次初始化各个 UI 模块
     initViewTitle();
 
     initViewContent();
@@ -722,44 +778,60 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 
     initViewFooter();
   }
-
+  /**
+   * @description 初始化并渲染详情页底部的“创建时间”与“最后修改时间”。
+   * @why 负责将底层的时间戳转换为用户易读的格式（支持读取偏好设置显示相对或绝对时间），并在数据为空时自动隐藏对应控件（View.GONE），保证界面视觉的整洁与美观。
+   */
   private void initViewFooter() {
     String creation = DateHelper
-        .getFormattedDate(noteTmp.getCreation(), Prefs.getBoolean(PREF_PRETTIFIED_DATES, true));
+        .getFormattedDate(noteTmp.getCreation(), Prefs.getBoolean(PREF_PRETTIFIED_DATES, true));// 问偏好，问显示时间的格式
     binding.creation
-        .append(creation.length() > 0 ? getString(R.string.creation) + " " + creation : "");
+        .append(creation.length() > 0 ? getString(R.string.creation) + " " + creation : "");// 添加进append
+
+    /**
+     * // 如果文本控件里面显示的文字为0，把控件设置为隐藏状态（GONE 表示不仅看不见，而且连它占用的屏幕空间也一起收回去）
+     */
     if (binding.creation.getText().length() == 0) {
       binding.creation.setVisibility(View.GONE);
     }
-
+    /**
+     * 初始化并渲染详情页底部的“创建时间”与“最后修改时间”
+     */
     String lastModification = DateHelper
         .getFormattedDate(noteTmp.getLastModification(), Prefs.getBoolean(
-            PREF_PRETTIFIED_DATES, true));
+            PREF_PRETTIFIED_DATES, true)); // 拿时间戳，将其翻译为人类语言
     binding.lastModification
         .append(lastModification.length() > 0 ? getString(R.string.last_update) + " " +
-            lastModification : "");
+            lastModification : "");  // 拼装并显示到屏幕上
     if (binding.lastModification.getText().length() == 0) {
       binding.lastModification.setVisibility(View.GONE);
     }
   }
-
+  /**
+   * @description 初始化并管理便签的“时间提醒（闹钟）”功能。
+   * @why
+   * 1. 交互闭环：单击绑定时间选择器，长按弹出取消确认框。
+   * 2. 底层同步：取消提醒时，必须调用 ReminderHelper 注销系统底层的 AlarmManager，防止产生“幽灵提醒”。
+   * 3. 状态回显：页面加载时，自动将已有的时间戳和重复规则格式化为人类可读的文字并渲染到界面。
+   */
   private void initViewReminder() {
+    ///点一下，设置提醒
     binding.fragmentDetailContent.reminderLayout.setOnClickListener(v -> {
       ReminderPickers reminderPicker = new ReminderPickers(mainActivity, mFragment);
       reminderPicker.pick(DateUtils.getPresetReminder(noteTmp.getAlarm()), noteTmp
           .getRecurrenceRule());
     });
-
+   ///长按，删除提醒
     binding.fragmentDetailContent.reminderLayout.setOnLongClickListener(v -> {
       MaterialDialog dialog = new MaterialDialog.Builder(mainActivity)
           .content(R.string.remove_reminder)
           .positiveText(R.string.ok)
           .onPositive((dialog1, which) -> {
-            ReminderHelper.removeReminder(getAppContext(), noteTmp);
-            noteTmp.setAlarm(null);
+            ReminderHelper.removeReminder(getAppContext(), noteTmp); // 取消系统闹钟
+            noteTmp.setAlarm(null); // 清空便签对象里的提醒时间
             binding.fragmentDetailContent.reminderIcon
                 .setImageResource(R.drawable.ic_alarm_black_18dp);
-            binding.fragmentDetailContent.datetime.setText("");
+            binding.fragmentDetailContent.datetime.setText("");  //  清空界面上的时间文字
           }).build();
       dialog.show();
       return true;
@@ -767,114 +839,146 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 
     // Reminder
     String reminderString = initReminder(noteTmp);
+    // 如果便签本来就有提醒，要把时间翻译成人类语言并展示出来
     if (!TextUtils.isEmpty(reminderString)) {
-      binding.fragmentDetailContent.reminderIcon
+      binding.fragmentDetailContent.reminderIcon //  图标变为“已激活”状态
           .setImageResource(R.drawable.ic_alarm_add_black_18dp);
-      binding.fragmentDetailContent.datetime.setText(reminderString);
+      binding.fragmentDetailContent.datetime.setText(reminderString); //显示具体的提醒时间文字
     }
   }
-
+  /**
+   * @description 初始化并管理“地理位置”视图。
+   * @why
+   * 1. 数据回显：根据便签的经纬度或文字地址，动态控制控件的显示。
+   * 2. 智能定位：若开启了自动定位且为新建便签，则自动请求 GPS。
+   * 3. 交互闭环：单击跳转外部地图（含无地图App时的网页兜底），长按确认后清空位置并淡出隐藏。
+   */
   private void initViewLocation() {
+    ///展示已有的地址（如果便签里存了定位）
     var detailFragment = this;
 
     if (isNoteLocationValid()) {
       String address = noteTmp.getAddress();
       if (TextUtils.isEmpty(address)) {
+        // // 如果没解析出人类地址，就直接显示经纬度
         // No address is stored for notes saved with coordinates only
         address = noteTmp.getLatitude() + ", " + noteTmp.getLongitude();
       }
-      binding.fragmentDetailContent.location.setText(address);
-      binding.fragmentDetailContent.location.setVisibility(View.VISIBLE);
+      binding.fragmentDetailContent.location.setText(address);  // 把文字（地址）塞到屏幕上的文本框里
+      binding.fragmentDetailContent.location.setVisibility(View.VISIBLE);//让这个文本框在屏幕上显示出来
     }
 
     // Automatic location insertion
+    ///自动获取定位（核心魔法）
     if (Prefs.getBoolean(PREF_AUTO_LOCATION, false) && noteTmp.get_id() == null) {
       getLocation(detailFragment);
     }
-
+    ///单击打开地图（Intent 跳转魔法）
     binding.fragmentDetailContent.location.setOnClickListener(v -> {
       String uriString = "geo:" + noteTmp.getLatitude() + ',' + noteTmp.getLongitude()
           + "?q=" + noteTmp.getLatitude() + ',' + noteTmp.getLongitude();
-      Intent locationIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriString));
+      Intent locationIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriString)); // 创建一个意图,我要查看geo:xx这个位置
+      // // 如果手机没有装地图软件，就用网页版高德/百度地图兜底
       if (!IntentChecker.isAvailable(mainActivity, locationIntent, null)) {
         uriString = String.format(Constants.MAPS_API, noteTmp.getLatitude(), noteTmp
             .getLongitude());
         locationIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriString));
       }
-      startActivity(locationIntent);
+      startActivity(locationIntent); // 执行跳转
     });
     binding.fragmentDetailContent.location.setOnLongClickListener(v -> {
       MaterialDialog.Builder builder = new MaterialDialog.Builder(mainActivity);
+      // 设置弹窗的内容和按钮
       builder.content(R.string.remove_location);
       builder.positiveText(R.string.ok);
       builder.onPositive((dialog, which) -> {
+        // 用户点击确定后，清空便签对象里的经纬度数据
         noteTmp.setLatitude("");
         noteTmp.setLongitude("");
+        // 调用 fade 方法，让地址控件做淡出动画并隐藏
         fade(binding.fragmentDetailContent.location, false);
       });
+      // 创建并显示弹窗
       MaterialDialog dialog = builder.build();
       dialog.show();
       return true;
     });
   }
-
+ ///“获取地理位置”的核心触发器。
   private void getLocation(OnGeoUtilResultListener onGeoUtilResultListener) {
     PermissionsHelper
+             // 申请精准定位和粗略定位权限，如果用户拒绝，会在 snackbarPlaceholder 展示提示
         .requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION}, R.string
                 .permission_coarse_location, binding.snackbarPlaceholder,
+                // 【权限通过后的回调】通过工厂模式获取定位提供者，并发起异步定位请求
             () -> LocationProviderFactory.getProvider().getLocation(onGeoUtilResultListener),
             true);
   }
-
+  /**
+   * @description 初始化附件展示网格，并处理附件的点击交互逻辑。
+   * @why
+   * 1. 动态布局：根据用户偏好，决定附件列表显示在正文上方还是下方。
+   * 2. 适配器绑定：将附件数据源与 GridView 绑定，并自动计算网格高度。
+   * 3. 多态点击路由：根据附件的 MIME 类型（文件、图片/视频、音频）分发不同的交互事件，提供原生的预览体验。
+   */
   private void initViewAttachments() {
     // Attachments position based on preferences
+    // 根据用户的偏好设置（PREF_ATTACHMENTS_ON_BOTTOM），决定附件网格是放在正文下方还是上方
     if (Prefs.getBoolean(PREF_ATTACHMENTS_ON_BOTTOM, false)) {
-      binding.detailAttachmentsBelow.inflate();
+      binding.detailAttachmentsBelow.inflate(); // 动态加载下方的附件布局
     } else {
-      binding.detailAttachmentsAbove.inflate();
+      binding.detailAttachmentsAbove.inflate(); // 动态加载上方的附件布
     }
     mGridView = binding.detailRoot.findViewById(R.id.gridview);
 
     // Some fields can be filled by third party application and are always shown
+    //  实例化附件适配器，把当前便签的附件列表（noteTmp.getAttachmentsList()）传进去
     mAttachmentAdapter = new AttachmentAdapter(mainActivity, noteTmp.getAttachmentsList());
-
+    // 将适配器绑定到网格视图
     // Initialzation of gridview for images
     mGridView.setAdapter(mAttachmentAdapter);
     mGridView.autoresize();
-
+    ///附件单击事件交互
     // Click events for images in gridview (zooms image)
     mGridView.setOnItemClickListener((parent, v, position, id) -> {
-      Attachment attachment = (Attachment) parent.getAdapter().getItem(position);
-      Uri shareableAttachmentUri = mainActivity.getShareableAttachmentUri(attachment);
+      Attachment attachment = (Attachment) parent.getAdapter().getItem(position); // 事件监听
+      Uri shareableAttachmentUri = mainActivity.getShareableAttachmentUri(attachment); //  // 获取一个安全的、可对外分享的 Uri
       if (shareableAttachmentUri == null) {
         return;
       }
       Intent attachmentIntent;
+      /// 如果是普通文件
       if (MIME_TYPE_FILES.equals(attachment.getMime_type())) {
-
+        // 尝试用系统默认的应用（如 WPS）打开它
         attachmentIntent = new Intent(Intent.ACTION_VIEW);
+        // 给目标应用授予临时的读写权限（否则第三方应用没有权限读取这个文件）
         attachmentIntent.setDataAndType(shareableAttachmentUri, StorageHelper.getMimeType(mainActivity,
             shareableAttachmentUri));
         attachmentIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent
             .FLAG_GRANT_WRITE_URI_PERMISSION);
+        /// 先检查手机里有没有能打开这个文件的应用，防崩溃
         if (IntentChecker
             .isAvailable(mainActivity.getApplicationContext(), attachmentIntent, null)) {
-          startActivity(attachmentIntent);
+          startActivity(attachmentIntent);  //打开
         } else {
           mainActivity.showMessage(R.string.feature_not_available_on_this_device, ONStyle.WARN);
         }
 
         // Media files will be opened in internal gallery
+        /// 如果是图片、草图或视频
       } else if (MIME_TYPE_IMAGE.equals(attachment.getMime_type())
           || MIME_TYPE_SKETCH.equals(attachment.getMime_type())
           || MIME_TYPE_VIDEO.equals(attachment.getMime_type())) {
         // Title
         noteTmp.setTitle(getNoteTitle());
         noteTmp.setContent(getNoteContent());
+        // 解析出一个默认的标题（如果便签没标题，就用内容前几个字代替）
         String title1 = TextHelper.parseTitleAndContent(mainActivity,
             noteTmp)[0].toString();
         // Images
+        // 遍历所有附件，把所有属于“图片/草图/视频”的附件挑出来，放进一个专门的列表中
+        // Why：因为画廊需要支持左右滑动查看上一张/下一张，不能把音频或文件也传进去。
         int clickedImage = 0;
         ArrayList<Attachment> images = new ArrayList<>();
         for (Attachment mAttachment : noteTmp.getAttachmentsList()) {
@@ -882,42 +986,52 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
               || MIME_TYPE_SKETCH.equals(mAttachment.getMime_type())
               || MIME_TYPE_VIDEO.equals(mAttachment.getMime_type())) {
             images.add(mAttachment);
+            // 记录当前点击的图片在列表中的索引位置，方便画廊打开时直接定位到这张
             if (mAttachment.equals(attachment)) {
               clickedImage = images.size() - 1;
             }
           }
         }
         // Intent
+        // 构建Intent
         attachmentIntent = new Intent(mainActivity, GalleryActivity.class);
         attachmentIntent.putExtra(GALLERY_TITLE, title1);
         attachmentIntent.putParcelableArrayListExtra(GALLERY_IMAGES, images);
         attachmentIntent.putExtra(GALLERY_CLICKED_IMAGE, clickedImage);
         startActivity(attachmentIntent);
 
-      } else if (MIME_TYPE_AUDIO.equals(attachment.getMime_type())) {
-        playback(v, attachment.getUri());
+      }
+     /// 如果是音频文件
+    else if (MIME_TYPE_AUDIO.equals(attachment.getMime_type())) {
+        playback(v, attachment.getUri()); // 不跳转页面，直接在当前界面播放/暂停音频
       }
 
     });
 
     mGridView.setOnItemLongClickListener((parent, v, position, id) -> {
       // To avoid deleting audio attachment during playback
+      // 如果视频正在播放，则播放中的视频不可以长按
       if (mPlayer != null) {
         return false;
       }
+      // 从资源文件加载长按操作菜单（通常包含：分享、删除、全部删除、编辑）
       List<String> items = Arrays
           .asList(getResources().getStringArray(R.array.attachments_actions));
+      // 动态裁剪菜单：只有“手绘草图”才允许“编辑”，其他文件（如普通图片、录音）隐藏“编辑”选项
       if (!MIME_TYPE_SKETCH.equals(mAttachmentAdapter.getItem(position).getMime_type())) {
         items = items.subList(0, items.size() - 1);
       }
       Attachment attachment = mAttachmentAdapter.getItem(position);
+      // 弹出 MaterialDialog，标题展示“文件名 + 文件大小”，并渲染操作菜单
       new MaterialDialog.Builder(mainActivity)
           .title(attachment.getName() + " (" + AttachmentsHelper.getSize(attachment) + ")")
           .items(items.toArray(new String[items.size()]))
+              // 将点击的菜单索引（i）和附件位置（position）传递给具体执行动作的方法
           .itemsCallback((materialDialog, view, i, charSequence) ->
               performAttachmentAction(position, i))
           .build()
           .show();
+      // 返回 true 表示消费了该长按事件，防止触发系统默认的长按行为（如文本复制等）
       return true;
     });
   }
@@ -1140,7 +1254,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     }
 
     boolean newNote = noteTmp.get_id() == null;
-
+    menu.findItem(R.id.menu_cancel_editing).setVisible(newNote);
     menu.findItem(R.id.menu_checklist_on).setVisible(!noteTmp.isChecklist());
     menu.findItem(R.id.menu_checklist_off).setVisible(noteTmp.isChecklist());
     menu.findItem(R.id.menu_checklist_moveToBottom)
@@ -1196,68 +1310,108 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 
     return true;
   }
-
+  /**
+   * @description 统一处理详情页顶部菜单栏的点击事件路由分发。
+   * @why
+   * 1. 防抖处理：通过 isOptionsItemFastClick 拦截快速连点，防止误触发重复操作或数据异常。
+   * 2. 统一路由：基于 switch-case 结构，根据不同的 MenuItem ID，将用户请求精准分发给对应的具体业务方法。
+   * 3. 防御兜底：对于未定义的菜单 ID，通过 LogDelegate 记录异常，防止 App 崩溃。
+   */
   @Override
   public boolean onOptionsItemSelected(MenuItem item) {
 
-    if (isOptionsItemFastClick()) {
+    if (isOptionsItemFastClick()) { // 【防误触机制】如果连续多次点击右上角按钮，就会退出。
       return true;
     }
-
+    // 【路由分发】根据菜单项的 ID 执行对应的业务逻辑
     switch (item.getItemId()) {
+      case R.id.menu_cancel_editing:
+        // 1. 拦截 onPause 自动保存
+        goBack = true;
+
+        // 2. 清理临时附件（防垃圾数据）
+        if (noteTmp != null && noteTmp.getAttachmentsList() != null) {
+          for (Attachment attachment : noteTmp.getAttachmentsList()) {
+            // 只有新加的附件才删（原来的没动，不能误删）
+            if (!noteOriginal.getAttachmentsList().contains(attachment)) {
+              StorageHelper.delete(mainActivity, attachment.getUri().getPath());
+            }
+          }
+        }
+
+        // 3. 退出当前页面
+        goHome();
+        break;
       case R.id.menu_attachment:
+        // 路由至：弹出附件选择菜单（拍照、录像、录音等）
         showAttachmentsPopup();
         break;
       case R.id.menu_tag:
+        // 路由至：弹出标签选择与编辑界面
         addTags();
         break;
       case R.id.menu_category:
+        // 路由至：弹出分类选择对话框
         categorizeNote();
         break;
       case R.id.menu_share:
+        // 路由至：调用系统分享面板分享当前便签
         shareNote();
         break;
       case R.id.menu_checklist_on:
       case R.id.menu_checklist_off:
+        // 路由至：切换普通文本模式与待办清单模式
         toggleChecklist();
         break;
       case R.id.menu_checklist_moveToBottom:
+        // 路由至：将已勾选的待办项移动到底部
         moveCheckedItemsToBottom();
         break;
       case R.id.menu_lock:
       case R.id.menu_unlock:
+        // 路由至：对便签进行加锁或解锁操作
         lockNote();
         break;
       case R.id.menu_pin_note:
+        // 路由至：将便签固定为常驻通知栏
         pinNote();
         break;
       case R.id.menu_add_shortcut:
+        // 路由至：在桌面添加快捷方式
         addShortcut();
         break;
       case R.id.menu_archive:
+        // 路由至：将便签移入归档
         archiveNote(true);
         break;
       case R.id.menu_unarchive:
+        // 路由至：取消便签归档
         archiveNote(false);
         break;
       case R.id.menu_trash:
+        // 路由至：将便签移入回收站
         trashNote(true);
         break;
       case R.id.menu_untrash:
+        // 路由至：从回收站还原便签
         trashNote(false);
         break;
       case R.id.menu_discard_changes:
+        // 路由至：放弃当前编辑的所有更改
         discard();
         break;
       case R.id.menu_delete:
+        // 路由至：彻底永久删除便签
         deleteNote();
         break;
       case R.id.menu_note_info:
+        // 路由至：显示便签的统计详情（字数、附件数等）
         showNoteInfo();
         break;
       default:
-        LogDelegate.w("Invalid menu option selected");
+        LogDelegate.w("Invalid menu option selected"); // LogDelegate 是项目自己封装的一个日志打印工具类，打印提醒
     }
+    // 将未处理的事件交还给父类处理，保持系统默认行为
     return super.onOptionsItemSelected(item);
   }
 
@@ -1445,52 +1599,71 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     pushbulletSelection.setVisibility(View.VISIBLE);
     pushbulletSelection.setOnClickListener(new AttachmentOnClickListener());
   }
-
+  /**
+   * @description 调用系统相机进行拍照，并将照片作为附件添加到当前便签。
+   * @why
+   * 1. 设备兼容性检查：通过 IntentChecker 预先检查设备是否具备摄像头及可处理意图，防止 ActivityNotFoundException 崩溃。
+   * 2. 动态权限申请：适配 Android 6.0+ 机制，在获得相机权限的回调后才真正执行拍照逻辑。
+   * 3. 提前占位与安全共享：先在私有目录创建空的 jpeg 文件作为输出载体；并通过 FileProvider 将 file:// 转换为 content:// 并授予临时读写权限，规避 Android 7.0+ 的 StrictMode 异常。
+   * 4. 异步回调接收：通过 startActivityForResult 携带 TAKE_PHOTO 请求码，在 onActivityResult 中接收照片并刷新 UI。
+   */
   private void takePhoto() {
     Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+    // 检查设备是否有摄像头以及是否有 App 能处理这个 Intent，防止崩溃
     if (!IntentChecker.isAvailable(mainActivity, intent, new String[]{FEATURE_CAMERA})) {
-      mainActivity.showMessage(R.string.feature_not_available_on_this_device, ONStyle.ALERT);
+      mainActivity.showMessage(R.string.feature_not_available_on_this_device, ONStyle.ALERT); // R.string.feature_not_available_on_this_device 对应文案：“设备不支持此功能”
       return;
     }
-
-    PermissionsHelper.requestPermission(this, CAMERA,
-        R.string.permission_camera, binding.snackbarPlaceholder, () -> {
+   ///能使用相机的过程
+    PermissionsHelper.requestPermission(this, CAMERA,  // 申请相机权限。
+        R.string.permission_camera, binding.snackbarPlaceholder, () -> { // Lambda 魔法：后面跟的 () -> { ... } 是一个回调函数。意思是：“如果用户点击了‘同意授权’，你就立刻执行大括号里面的代码
           // Checks for created file validity
-          File f = StorageHelper.createNewAttachmentFile(mainActivity, MIME_TYPE_IMAGE_EXT);
-          if (f == null) {
-            mainActivity.showMessage(R.string.error, ONStyle.ALERT);
+          File f = StorageHelper.createNewAttachmentFile(mainActivity, MIME_TYPE_IMAGE_EXT); // 提前创建一个空的图片文件，StorageHelper（存储小助手）去手机的私有目录里，新建一个后缀为 .jpeg 的空文件，MIME_TYPE_IMAGE_EXT指向的就是后缀为 .jpeg
+          // why:如用户手机存储空间满了，或者系统没给 App 读写文件的权限
+              if (f == null) {
+            mainActivity.showMessage(R.string.error, ONStyle.ALERT); // 调用主界面（mainActivity）的 showMessage 方法，R.string.error这是提示条里显示的文字内容，ALERT 代表红色警告/错误级别
             return;
           }
           attachmentUri = Uri.fromFile(f);
-          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-          intent.putExtra(MediaStore.EXTRA_OUTPUT, FileProviderHelper.getFileProvider(f));
-          startActivityForResult(intent, TAKE_PHOTO);
+          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); // 该 Flag 用于临时授予目标应用对该 Uri 的读取权限，确保文件能够被正确写入。
+          intent.putExtra(MediaStore.EXTRA_OUTPUT, FileProviderHelper.getFileProvider(f)); //通过 putExtra 设置 MediaStore.EXTRA_OUTPUT 键值，指明拍照结果的输出路径，同时，调用 FileProviderHelper 将 file:// 路径转换为 content:// 形式的安全 URI
+          startActivityForResult(intent, TAKE_PHOTO);  //执行跳转，并监听相机的返回结果
         });
   }
-
+  /**
+   * @description 调用系统摄像机录制视频并作为附件保存。
+   * @why
+   * 1. 防呆校验：先查硬件与系统支持，再申请相机动态权限。
+   * 2. 安全占位：创建沙盒空文件，并通过 FileProvider 转换安全 URI 授权给相机。
+   * 3. 容量熔断：读取偏好设置中的 MB 阈值并转为字节，限制系统相机的录制大小。
+   */
   private void takeVideo() {
     var takeVideoIntent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+    //  构建录像的隐式 Intent 并检查设备支持情况
     if (!IntentChecker.isAvailable(mainActivity, takeVideoIntent,
         new String[]{FEATURE_CAMERA})) {
-      mainActivity.showMessage(R.string.feature_not_available_on_this_device, ONStyle.ALERT);
+      mainActivity.showMessage(R.string.feature_not_available_on_this_device, ONStyle.ALERT); // // 弹出提示消息
       return;
     }
-
-    PermissionsHelper.requestPermission(this, CAMERA,
+   /// 可以录像时的过程
+    PermissionsHelper.requestPermission(this, CAMERA, // 向系统申请相机权限
         R.string.permission_camera, binding.snackbarPlaceholder, () -> {
           // File is stored in custom ON folder to speedup the attachment
+              //：调用 StorageHelper 在应用沙盒目录中生成一个指定扩展名（.mp4）的临时占位文件（Placeholder）。若文件实例化为 null（如发生 IO 异常），则弹窗报错并中断流程。
           var f = StorageHelper.createNewAttachmentFile(mainActivity, MIME_TYPE_VIDEO_EXT);
           if (f == null) {
             mainActivity.showMessage(R.string.error, ONStyle.ALERT);
             return;
           }
+          //生成文件的标准 Uri，并通过 FileProviderHelper 将 file:// 转换为 content://
           attachmentUri = Uri.fromFile(f);
           takeVideoIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
           takeVideoIntent.putExtra(MediaStore.EXTRA_OUTPUT, FileProviderHelper.getFileProvider(f));
+              //通过 Prefs 读取用户设定的视频大小阈值（单位 MB），借助 NumberHelper 将其转换为字节数，最后通过 MediaStore.EXTRA_SIZE_LIMIT 传入系统相机，从系统层面限制输出的视频体积。
           var maxVideoSizeStr = Prefs.getString("settings_max_video_size", "");
           long maxVideoSize = NumberHelper.megabytesToBytes(maxVideoSizeStr);
           takeVideoIntent.putExtra(MediaStore.EXTRA_SIZE_LIMIT, maxVideoSize);
-          startActivityForResult(takeVideoIntent, TAKE_VIDEO);
+          startActivityForResult(takeVideoIntent, TAKE_VIDEO); // 开启录像
         });
   }
 
@@ -1538,10 +1711,17 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     editable.insert(position, dateStamp);
     Selection.setSelection(editable, position + dateStamp.length());
   }
-
-  @SuppressLint("NewApi")
+  /**
+   * @description 统一处理所有外部组件（相机、相册、画板、分类页等）执行完毕后的返回结果。
+   * @why
+   * 1. 状态校验：通过 resultCode 确保操作成功（RESULT_OK），防止无效数据导致崩溃。
+   * 2. 路由分发：根据 requestCode 精准区分业务来源，将对应的物理文件或实体数据包装成 Attachment 或 Category。
+   * 3. UI 同步：完成数据模型的更新后，即刻触发 Adapter 刷新与 GridView 高度重测，确保新附件或新分类状态实时呈现给用户。
+   */
+  @SuppressLint("NewApi") // Android Lint 工具提供的一个注解，属于静态代码分析（Static Code Analysis）的抑制机制。如果你的 minSdkVersion 设得比较低（比如支持 Android 5.0），但你用了一个 Android 6.0 才出的方法，IDE 会提示你不兼容，这个标签就是告诉系统“这部分代码我确信运行环境没问题，不需要你管”
   @Override
-  public void onActivityResult(int requestCode, int resultCode, Intent intent) {
+  // 重写自 Fragment（或 Activity）的生命周期回调方法，接收并处理外部 Activity 返回的数据，把外部拿回来的东西（照片、文件、选择的分类）融合进当前的便签里
+  public void onActivityResult(int requestCode, int resultCode, Intent intent) { // requestCode相当于任务代号；resultCode任务完成的状态报告，判断是否成；intent相当于任务完成后的“数据包裹”，你要的东西全在里面
     // Fetch uri from activities, store into adapter and refresh adapter
     Attachment attachment;
     if (resultCode == Activity.RESULT_OK) {
@@ -1549,7 +1729,9 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
         case TAKE_PHOTO:
           attachment = new Attachment(attachmentUri, MIME_TYPE_IMAGE);
           addAttachment(attachment);
-          mAttachmentAdapter.notifyDataSetChanged();
+          mAttachmentAdapter.notifyDataSetChanged(); // //  UI 刷新：通知适配器数据已变更，触发重新渲染。调用 BaseAdapter 的 notifyDataSetChanged() 方法。这会触发 RecyclerView 或 GridView 的重新绘制流程，将最新的数据集合同步渲染到视图层
+          // 布局重测：重新计算 GridView 的高度；防止新增照片被截断显示，或者导致整个页面布局错乱
+          // Why：由于 GridView 在 ScrollView 中默认只显示一行，必须重新测量高度，否则新拍的照片会被遮挡或显示不全。
           mGridView.autoresize();
           break;
         case TAKE_VIDEO:
@@ -1558,24 +1740,26 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
           mAttachmentAdapter.notifyDataSetChanged();
           mGridView.autoresize();
           break;
-        case FILES:
-          onActivityResultManageReceivedFiles(intent);
+        case FILES: // 说明用户刚才去的是“文件选择器”
+          onActivityResultManageReceivedFiles(intent); // 调用自定义的私有方法，将包含 Uri 数据的 Intent 传递进去。该方法内部通常会判断 intent.getClipData()（多选文件）或 intent.getData()（单选文件），并循环开启 AttachmentTask 异步任务来复制和解析文件
           break;
-        case SET_PASSWORD:
-          noteTmp.setPasswordChecked(true);
-          lockUnlock();
+        // 【处理密码验证/设置返回】
+        // Why：用户从密码设置页返回，说明操作已成功且结果码为 RESULT_OK。
+          case SET_PASSWORD:
+          noteTmp.setPasswordChecked(true); //意思大概就是告诉别人你的密码输入正确了，给你ton
+          lockUnlock(); //调用此方法后，内部会翻转 isLocked 状态，并刷新顶部菜单的锁图标
           break;
-        case SKETCH:
+        case SKETCH: // 用户从画板界面成功返回，需要将画好的草图加入当前便签。
           attachment = new Attachment(attachmentUri, MIME_TYPE_SKETCH);
           addAttachment(attachment);
           mAttachmentAdapter.notifyDataSetChanged();
           mGridView.autoresize();
           break;
         case CATEGORY:
-          mainActivity.showMessage(R.string.category_saved, ONStyle.CONFIRM);
+          mainActivity.showMessage(R.string.category_saved, ONStyle.CONFIRM);// 调用封装的 showMessage 方法，传入文本资源 ID R.string.category_saved 和成功样式 ONSyle.CONFIRM，利用 Crouton 库渲染非阻塞式提示，提升用户体验
           Category category = intent.getParcelableExtra("category");
           noteTmp.setCategory(category);
-          setTagMarkerColor(category);
+          setTagMarkerColor(category); // UI 渲染：根据新分类的颜色属性，动态刷新界面上的标签颜色条
           break;
         case DETAIL:
           mainActivity.showMessage(R.string.note_updated, ONStyle.CONFIRM);
@@ -1604,15 +1788,22 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   /**
    * Discards changes done to the note and eventually delete new attachments
    */
+  /**
+   * @description 处理用户“放弃当前修改”的完整回滚流程。
+   * @why
+   * 1. 防误触：弹出二次确认对话框，保障高风险操作的安全性。
+   * 2. 物理清理：通过集合差集比对，精准定位并物理删除本次编辑新增的废弃附件，防止存储泄漏。
+   * 3. 状态回滚：若修改未变动则直接退出；若为已有便签则异步覆盖回滚数据库，并同步刷新桌面小部件；若为未落库的新建便签则直接销毁页面。
+   */
   private void discard() {
-    new MaterialDialog.Builder(mainActivity)
-        .content(R.string.undo_changes_note_confirmation)
-        .positiveText(R.string.ok)
-        .onPositive((dialog, which) -> {
-          if (!noteTmp.getAttachmentsList().equals(note.getAttachmentsList())) {
+    new MaterialDialog.Builder(mainActivity) //使用建造者模式（Builder Pattern）实例化第三方库 MaterialDialog 的构建器，并传入当前的 Context（mainActivity），用于绑定视图生命周期。
+        .content(R.string.undo_changes_note_confirmation) // 设置弹窗的主体文本内容（Message）,通过 R.string.xxx 引用字符串资源.意思就是在弹窗中间写上提示语，文字内容是资源文件里提前写好的
+        .positiveText(R.string.ok) // ：在弹窗的右侧（或下方），放一个写着“确定”的按钮，设置正向（Positive）按钮的文案。在 Material Design 规范中，Positive 按钮通常代表“继续”或“确认”操作
+        .onPositive((dialog, which) -> { // 点击确认之后执行代码
+          if (!noteTmp.getAttachmentsList().equals(note.getAttachmentsList())) { // 判断用户的修改操作是否引起了附件集合的变更
             for (Attachment newAttachment : noteTmp.getAttachmentsList()) {
               if (!note.getAttachmentsList().contains(newAttachment)) {
-                StorageHelper.delete(mainActivity, newAttachment.getUri().getPath());
+                StorageHelper.delete(mainActivity, newAttachment.getUri().getPath()); //调用 StorageHelper 工具类执行物理删除（I/O 操作）
               }
             }
           }
@@ -1620,18 +1811,21 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
           goBack = true;
 
           if (noteTmp.equals(noteOriginal)) {
-            goHome();
+            goHome(); // 直接关掉当前详情页，返回上一页
           }
 
-          if (noteOriginal.get_id() != null) {
-            new SaveNoteTask(false).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, noteOriginal);
-            BaseActivity.notifyAppWidgets(mainActivity);
+          if (noteOriginal.get_id() != null) {//区分当前便签是“旧便签”还是“完全新建的便签”，当前为旧标签
+            new SaveNoteTask(false).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, noteOriginal); //实例化异步任务 SaveNoteTask，将 noteOriginal 作为参数丢进线程池执行。传入 false 意味着在回写时不更新便签的“最后修改时间”，因为用户并没有真正修改它
+            BaseActivity.notifyAppWidgets(mainActivity); // 发送数据更新广播，驱动桌面小部件重新读取数据库并渲染
           } else {
             goHome();
           }
-        }).build().show();
+        }).build().show(); // 把刚才这段长长的逻辑绑定到弹窗的“确定”按钮上，构建出弹窗实体，并在屏幕上弹出来。
   }
-
+  /**
+   * @description 归档或取消归档当前便签（新便签直接返回，否则保存并退出）。
+   * @why 复用同一方法通过 archive 参数双向控制归档状态，避免归档/取消归档两套重复逻辑。
+   */
   @SuppressLint("NewApi")
   private void archiveNote(boolean archive) {
     // Simply go back if is a new note
@@ -1640,9 +1834,9 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       return;
     }
 
-    noteTmp.setArchived(archive);
+    noteTmp.setArchived(archive);  // 一个方法就同时处理了“归档”和“取消归档”两个相反的动作
     goBack = true;
-    exitMessage = archive ? getString(R.string.note_archived) : getString(R.string.note_unarchived);
+    exitMessage = archive ? getString(R.string.note_archived) : getString(R.string.note_unarchived); //  使用三元运算符动态判断：如果是归档（true），记录“已归档”文案；否则记录“已取消归档”文案。
     exitCroutonStyle = archive ? ONStyle.WARN : ONStyle.INFO;
     saveNote();
   }
@@ -1657,27 +1851,30 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 
     noteTmp.setTrashed(trash);
     goBack = true;
-    exitMessage = trash ? getString(R.string.note_trashed) : getString(R.string.note_untrashed);
-    exitCroutonStyle = trash ? ONStyle.WARN : ONStyle.INFO;
-    if (trash) {
-      ShortcutHelper.removeShortcut(getAppContext(), noteTmp);
-      ReminderHelper.removeReminder(getAppContext(), noteTmp);
-    } else {
-      ReminderHelper.addReminder(getAppContext(), note);
+    exitMessage = trash ? getString(R.string.note_trashed) : getString(R.string.note_untrashed); // 根据 trash 取值，通过三元运算符选择对应的字符串资源，赋值给退出提示文案字段 exitMessage
+    exitCroutonStyle = trash ? ONStyle.WARN : ONStyle.INFO; // 根据 trash 选择 Crouton 提示条样式：true 用 ONStyle.WARN（警示），false 用 ONStyle.INFO（信息），与 exitMessage 配套使用。
+    if (trash) {// 如果是删除
+      ShortcutHelper.removeShortcut(getAppContext(), noteTmp); // 取消快捷方式图标
+      ReminderHelper.removeReminder(getAppContext(), noteTmp); // 取消系统闹钟
+    } else { // 如果是便签被捞回来了
+      ReminderHelper.addReminder(getAppContext(), note); // 调用 ReminderHelper.addReminder 重新注册提醒；传入 note（原始持久化对象）而非 noteTmp，确保还原时使用的是数据库中的提醒配置
     }
     saveNote();
   }
-
+  /**
+   * @description 彻底永久删除当前便签。
+   * @why 通过二次确认弹窗防止误触，确认后委托主界面执行物理销毁，并记录日志、反馈红色警告及关闭当前页面。
+   */
   private void deleteNote() {
-    new MaterialDialog.Builder(mainActivity)
+    new MaterialDialog.Builder(mainActivity)  // 防误触，使用 MaterialDialog 构建器实例化确认弹窗
         .content(R.string.delete_note_confirmation)
         .positiveText(R.string.ok)
-        .onPositive((dialog, which) -> {
+        .onPositive((dialog, which) -> { // 如果点击了OK,就执行代码
           mainActivity.deleteNote(noteTmp);
-          LogDelegate.d("Deleted note with ID '" + noteTmp.get_id() + "'");
-          mainActivity.showMessage(R.string.note_deleted, ONStyle.ALERT);
+          LogDelegate.d("Deleted note with ID '" + noteTmp.get_id() + "'"); // 后台控制台记录
+          mainActivity.showMessage(R.string.note_deleted, ONStyle.ALERT); // 弹出红色删除成功提示
           goHome();
-        }).build().show();
+        }).build().show(); // 渲染并显示弹窗
   }
 
   public void saveAndExit() {
@@ -1693,20 +1890,29 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   /**
    * Save new notes, modify them or archive
    */
+  /**
+   * @description 保存便签的核心方法。
+   * @why
+   * 1. 数据同步：将 UI 控件里的最新文字同步到数据模型。
+   * 2. 防垃圾数据：拦截“无标题、无内容、无附件”的三无空便签。
+   * 3. 防冗余保存：通过对比原件，判断是否真的发生了变化，没变就不写数据库。
+   * 4. 异步写入：将耗时的数据库事务交给 SaveNoteTask 在后台线程执行，保证 UI 流畅。
+   */
   void saveNote() {
+    // 从界面控件中提取用户输入的标题和内容，更新到便签模型
     noteTmp.setTitle(getNoteTitle());
     noteTmp.setContent(getNoteContent());
-
+    // 【防垃圾数据】如果是空便签，拒绝保存并直接退出
     // Check if some text or attachments of any type have been inserted or is an empty note
     if (goBack && TextUtils.isEmpty(noteTmp.getTitle()) && TextUtils.isEmpty(noteTmp.getContent())
-        && noteTmp.getAttachmentsList().isEmpty()) {
+        && noteTmp.getAttachmentsList().isEmpty()) { // 如果你按了返回键（goBack == true），而且标题、内容、附件全都是空的
       LogDelegate.d("Empty note not saved");
       exitMessage = getString(R.string.empty_note_not_saved);
-      exitCroutonStyle = ONStyle.INFO;
+      exitCroutonStyle = ONStyle.INFO; // / 设置提示框样式为“信息级（INFO）”，因为空便签不保存不算报错，只是提醒。Crouton 是项目里用的一个第三方提示库，ONStyle 是项目自己定义的样式类。这里给它赋值为 INFO
       goHome();
       return;
     }
-
+    //【防冗余保存】如果用户什么都没改，直接退出，不浪费数据库性能
     if (saveNotNeeded()) {
       exitMessage = "";
       if (goBack) {
@@ -1715,9 +1921,9 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       return;
     }
 
-    noteTmp.setAttachmentsListOld(note.getAttachmentsList());
-
-    new SaveNoteTask(lastModificationUpdatedNeeded()).executeOnExecutor(AsyncTask
+    noteTmp.setAttachmentsListOld(note.getAttachmentsList());  // Why：因为用户可能在编辑时删除了旧照片。把旧列表暂存起来，是为了让后台任务在保存时进行比对，从而精准地清理掉那些在手机存储中已经被用户移除的物理文件，防止产生垃圾。
+    // 开启异步任务写入数据库
+    new SaveNoteTask(lastModificationUpdatedNeeded()).executeOnExecutor(AsyncTask // lastModificationUpdatedNeeded()：判断是否需要更新便签的“最后修改时间”
         .THREAD_POOL_EXECUTOR, noteTmp);
   }
 
