@@ -17,26 +17,40 @@
 
 package it.feio.android.omninotes.models;
 
+/**
+ * 统计聚合模型：承载统计页（StatsActivity）展示的全部计数与篇幅指标。
+ * @why 继承 StatsSingleNote 复用单条笔记的字数/字符统计字段，扩展出全局统计字段；
+ *      由 DbHelper.getStats() 一次性查询组装，避免界面层多次查库。
+ */
 public class Stats extends StatsSingleNote {
 
-  private int notesActive;
-  private int notesArchived;
-  private int notesTrashed;
-  private int reminders;
-  private int remindersFutures;
-  private int notesChecklist;
-  private int notesMasked;
-  private int categories;
+  // ===== 笔记状态计数 =====
+  private int notesActive;//活跃笔记数
+  private int notesArchived;//归档笔记数
+  private int notesTrashed;//回收站笔记数
+  // ===== 提醒计数 =====
+  private int reminders;//已设置提醒的笔记数
+  private int remindersFutures;// 未来待触发的提醒数
+  // ===== 特殊类型计数 =====
+  private int notesChecklist;//清单型笔记数
+  private int notesMasked;//锁定（加密）笔记数
+  private int categories;//分类总数
 
-  private int location;
+  private int location;//带定位信息的笔记数
 
-  private int wordsMax;
-  private int wordsAvg;
-  private int charsMax;
-  private int charsAvg;
-  private long usageTime;
+  // ===== 篇幅指标 =====
+  private int wordsMax;// 单条最大词数
+  private int wordsAvg;//平均词数
+  private int charsMax;//单条最大字符数
+  private int charsAvg;//平均字符数
+  private long usageTime;//累计使用时长（毫秒）
 
 
+  /**
+   * 笔记总数 = 活跃 + 归档 + 回收站。
+   * @why 三个状态互斥覆盖全部笔记，总数由明细现算而非单独存储，避免数据不一致。
+   */
+  // 标准 getter/setter：字段读写，无业务逻辑（供 Jackson/界面绑定使用）
   public int getNotesTotalNumber() {
     return notesActive + notesArchived + notesTrashed;
   }
@@ -122,6 +136,8 @@ public class Stats extends StatsSingleNote {
   }
 
 
+  // 以下 getTags/getWords/getChars 均为父类 StatsSingleNote 字段的访问器重写，
+  // 保持统计字段集中在 Stats 中统一读写
   @Override
   public int getTags() {
     return tags;
