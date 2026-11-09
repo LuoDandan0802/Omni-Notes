@@ -1254,7 +1254,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     }
 
     boolean newNote = noteTmp.get_id() == null;
-
+    menu.findItem(R.id.menu_cancel_editing).setVisible(newNote);
     menu.findItem(R.id.menu_checklist_on).setVisible(!noteTmp.isChecklist());
     menu.findItem(R.id.menu_checklist_off).setVisible(noteTmp.isChecklist());
     menu.findItem(R.id.menu_checklist_moveToBottom)
@@ -1325,6 +1325,23 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     }
     // 【路由分发】根据菜单项的 ID 执行对应的业务逻辑
     switch (item.getItemId()) {
+      case R.id.menu_cancel_editing:
+        // 1. 拦截 onPause 自动保存
+        goBack = true;
+
+        // 2. 清理临时附件（防垃圾数据）
+        if (noteTmp != null && noteTmp.getAttachmentsList() != null) {
+          for (Attachment attachment : noteTmp.getAttachmentsList()) {
+            // 只有新加的附件才删（原来的没动，不能误删）
+            if (!noteOriginal.getAttachmentsList().contains(attachment)) {
+              StorageHelper.delete(mainActivity, attachment.getUri().getPath());
+            }
+          }
+        }
+
+        // 3. 退出当前页面
+        goHome();
+        break;
       case R.id.menu_attachment:
         // 路由至：弹出附件选择菜单（拍照、录像、录音等）
         showAttachmentsPopup();
