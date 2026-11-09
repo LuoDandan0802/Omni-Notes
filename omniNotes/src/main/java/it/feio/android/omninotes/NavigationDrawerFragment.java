@@ -184,10 +184,6 @@ public class NavigationDrawerFragment extends Fragment {
       }
     };
 
-    if (isDoublePanelActive()) {
-      mDrawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_OPEN);
-    }
-
     // Styling options
     mDrawerLayout.setDrawerShadow(R.drawable.drawer_shadow, GravityCompat.START);
     mDrawerLayout.addDrawerListener(mDrawerToggle);

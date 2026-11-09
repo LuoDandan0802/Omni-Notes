@@ -197,6 +197,7 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.CollectionUtils;
 
@@ -1517,12 +1518,13 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   private void categorizeNote() {
     var currentCategory = noteTmp.getCategory() != null ? String.valueOf(noteTmp.getCategory().getId()) : null;
     var  originalCategory = noteOriginal.getCategory() != null ? String.valueOf(noteOriginal.getCategory().getId()) : null;
+    final boolean categoryChanged = !Objects.equals(currentCategory, originalCategory);
     final var categories = DbHelper.getInstance().getCategories().stream()
         .map(category -> {
-          if (String.valueOf(category.getId()).equals(currentCategory) && currentCategory != originalCategory) {
+          if (String.valueOf(category.getId()).equals(currentCategory) && categoryChanged) {
             category.setCount(category.getCount() + 1);
           }
-          if (String.valueOf(category.getId()).equals(originalCategory) && currentCategory != originalCategory) {
+          if (String.valueOf(category.getId()).equals(originalCategory) && categoryChanged) {
             category.setCount(category.getCount() - 1);
           }
           return category;

@@ -336,7 +336,7 @@ public class DbHelper extends SQLiteOpenHelper {
     //逐条写入当前附件：仍在旧列表中的附件视为被删除，事务内一并删除
     List<Attachment> deletedAttachments = note.getAttachmentsListOld();
     for (Attachment attachment : note.getAttachmentsList()) {
-      updateAttachment(note.get_id() != null ? note.get_id() : values.getAsLong(KEY_CREATION),
+      updateAttachment(note.get_id() != null ? note.get_id() : (long) values.getAsLong(KEY_CREATION),
           attachment, db);
       //已存在的附件从“待删除”集合中移除
       deletedAttachments.remove(attachment);
@@ -354,7 +354,7 @@ public class DbHelper extends SQLiteOpenHelper {
     // Fill the note with correct data before returning it（在归还单据前填写正确信息）
     //回填真实写入的creation/lastModification，供调用方（如EventBus通知）使用
     note.setCreation(
-        note.getCreation() != null ? note.getCreation() : values.getAsLong(KEY_CREATION));
+        note.getCreation() != null ? note.getCreation() : (long) values.getAsLong(KEY_CREATION));
     note.setLastModification(values.getAsLong(KEY_LAST_MODIFICATION));
 
     return note;
