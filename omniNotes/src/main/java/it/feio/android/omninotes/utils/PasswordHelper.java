@@ -57,7 +57,7 @@ public class PasswordHelper {
         .onPositive((dialog12, which) -> {
           String storedPassword = Prefs.getString(PREF_PASSWORD, "");
           String password = passwordEditText.getText().toString();
-          boolean result = Security.md5(password).equals(storedPassword);
+          boolean result = verifyHash(password, storedPassword);
 
           // In case password is ok dialog is dismissed and result sent to callback
           if (result) {
@@ -113,7 +113,7 @@ public class PasswordHelper {
           String oldAnswer = Prefs.getString(PREF_PASSWORD_ANSWER, "");
           String answer1 = answerEditText.getText().toString();
           // The check is done on password's hash stored in preferences
-          boolean result = Security.md5(answer1).equals(oldAnswer);
+          boolean result = verifyHash(answer1, oldAnswer);
           if (result) {
             dialogElement.dismiss();
             removePassword();
@@ -132,6 +132,21 @@ public class PasswordHelper {
     });
 
     new Handler().postDelayed(() -> KeyboardUtils.showKeyboard(answerEditText), 100);
+  }
+
+
+  /**
+   * 校验用户输入的明文与偏好设置中保存的摘要是否一致。
+   *
+   * @param input  用户输入的明文（锁屏密码或密保答案）
+   * @param stored 升级前或升级后写入 Prefs 的摘要值
+   * @return 任一算法命中即视为通过
+   * @why 摘要算法由 MD5 升级为 SHA-256 后，升级前设置的密码仍以 MD5 形式存于 Prefs，
+   *      若只按新算法比对会导致老用户无法解锁。此处先按 SHA-256 比对，失败再回退 MD5，
+   *      使算法迁移对已有数据透明；用户重新设置密码时会写入新的 SHA-256 摘要。
+   */
+  private static boolean verifyHash(String input, String stored) {
+    return Security.md5(input).equals(stored) || Security.legacyMd5(input).equals(stored);
   }
 
 
