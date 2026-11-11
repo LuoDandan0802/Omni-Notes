@@ -79,7 +79,8 @@ public class DbHelper extends SQLiteOpenHelper {
   // Database name（数据库名称）
   // Database version aligned if possible to software version（数据库版本尽可能与软件版本保持一致）
   //数据库版本号，与App版本同步维护；每次升级递增，触发onUpgrade执行对应脚本
-  private static final int DATABASE_VERSION = 625;
+  //第 10 周新增 is_pinned（置顶）列：版本由 625 提升到 626，配套脚本 assets/sql/upgrade-626.sql
+  private static final int DATABASE_VERSION = 626;
   // Sql query file directory（Sql查询文件目录）
   // 建表 SQL 脚本所在目录（相对 assets 根）
   private static final String SQL_DIR = "sql";
@@ -108,6 +109,8 @@ public class DbHelper extends SQLiteOpenHelper {
   public static final String KEY_CATEGORY = "category_id";
   public static final String KEY_LOCKED = "locked";
   public static final String KEY_CHECKLIST = "checklist";
+  // 置顶标记列：1 表示置顶（列表排序时优先），0 表示普通
+  public static final String KEY_PINNED = "is_pinned";
 
   //----------attachments附件表：一篇笔记可关联多个附件，通过note_id外键关联notes表----------
   // Attachments table name（附件表名）
@@ -327,6 +330,8 @@ public class DbHelper extends SQLiteOpenHelper {
     values.put(KEY_CATEGORY, note.getCategory() != null ? note.getCategory().getId() : null);
     values.put(KEY_LOCKED, note.isLocked() != null && note.isLocked());
     values.put(KEY_CHECKLIST, note.isChecklist() != null && note.isChecklist());
+    //置顶状态整行保存时一并写入，新建笔记缺省为 0（未置顶）
+    values.put(KEY_PINNED, note.isPinned());
 
     //REPLACE策略：主键冲突即覆盖整行，实现“保存即新增或更新”
     db.insertWithOnConflict(TABLE_NOTES, KEY_ID, values, CONFLICT_REPLACE);
@@ -573,6 +578,7 @@ public class DbHelper extends SQLiteOpenHelper {
         + KEY_ADDRESS + ","
         + KEY_LOCKED + ","
         + KEY_CHECKLIST + ","
+        + KEY_PINNED + ","
         + KEY_CATEGORY + ","
         + KEY_CATEGORY_NAME + ","
         + KEY_CATEGORY_DESCRIPTION + ","
@@ -580,7 +586,8 @@ public class DbHelper extends SQLiteOpenHelper {
         + " FROM " + TABLE_NOTES
         + " LEFT JOIN " + TABLE_CATEGORY + " USING( " + KEY_CATEGORY + ") "
         + whereCondition
-        + (order ? " ORDER BY " + sortColumn + " COLLATE NOCASE " + sortOrder : "");
+        //置顶优先：先按 is_pinned 降序把置顶笔记整体提到前面，再按用户选择的列排序
+        + (order ? " ORDER BY " + KEY_PINNED + " DESC, " + sortColumn + " COLLATE NOCASE " + sortOrder : "");
 
     LogDelegate.v("Query: " + query);
 
@@ -610,6 +617,8 @@ public class DbHelper extends SQLiteOpenHelper {
           note.setAddress(cursor.getString(i++));
           note.setLocked("1".equals(cursor.getString(i++)));
           note.setChecklist("1".equals(cursor.getString(i++)));
+          //置顶标记：与 locked/checklist 同为 0/1 字符串，按字符串比对还原布尔
+          note.setPinned("1".equals(cursor.getString(i++)));
 
           // Eventual decryption of content（内容的最终解密)
           //读到的内容若是锁定便签，则用密码解密还原明文（与updateNote写入时加密对称）
@@ -641,6 +650,26 @@ public class DbHelper extends SQLiteOpenHelper {
 
     LogDelegate.v("Query: Retrieval finished!");//日志：查询完成（verbose级，仅调试可见）
     return noteList;
+  }
+
+
+  /**
+   * 设置（或取消）单条笔记的置顶状态并立即落库。
+   * @why 置顶只改变列表排序，不该刷新“最后修改时间”，也不适合走 updateNote 的全字段覆写
+   *      （会重算修改时间、重扫附件、并对锁定笔记重新加密），因此这里只更新 is_pinned 一列。
+   * @param note   目标笔记；方法内同步其内存状态，调用方可直接用它刷新列表
+   * @param pinned true 置顶，false 取消置顶
+   */
+  public void setPinned(Note note, boolean pinned) {
+    note.setPinned(pinned);//先同步内存对象，界面无需再手动回填
+    if (note.get_id() == null) {
+      //尚未落库的新建笔记没有主键，nothing to update：置顶状态随首次保存一并写入
+      return;
+    }
+    ContentValues values = new ContentValues();
+    values.put(KEY_PINNED, pinned ? 1 : 0);
+    getDatabase(true).update(TABLE_NOTES, values, KEY_ID + " = ?",
+        new String[]{String.valueOf(note.get_id())});
   }
 
 

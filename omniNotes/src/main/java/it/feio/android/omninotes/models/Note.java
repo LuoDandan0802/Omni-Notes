@@ -18,6 +18,7 @@ package it.feio.android.omninotes.models;
 
 import android.os.Parcel;
 import android.os.Parcelable;
+import com.google.gson.Gson;
 import it.feio.android.omninotes.commons.models.BaseAttachment;
 import it.feio.android.omninotes.commons.models.BaseCategory;
 import it.feio.android.omninotes.commons.models.BaseNote;
@@ -52,6 +53,8 @@ public class Note extends BaseNote implements Parcelable {
   };
   // Not saved in DB
   private boolean passwordChecked = false;// 运行时标记：本便签是否已通过密码校验（不持久化，进程重启即复位）
+  // 数据库字段：是否置顶到列表顶部（对应 notes.is_pinned，1 置顶 / 0 普通）
+  private boolean pinned = false;
 
 
   /**
@@ -84,6 +87,7 @@ public class Note extends BaseNote implements Parcelable {
   public Note(Note note) {
     super(note);
     setPasswordChecked(note.isPasswordChecked());
+    setPinned(note.isPinned());//置顶状态随副本一起复制，避免编辑快照丢标记
   }
 
 
@@ -109,6 +113,7 @@ public class Note extends BaseNote implements Parcelable {
     super.setCategory(in.readParcelable(Category.class.getClassLoader()));
     setLocked(in.readInt());
     setChecklist(in.readInt());
+    setPinned(in.readInt() == 1);//置顶标志：布尔以 1/0 传递
     in.readList(getAttachmentsList(), Attachment.class.getClassLoader());
   }
 
@@ -182,6 +187,19 @@ public class Note extends BaseNote implements Parcelable {
   }
 
   /**
+   * 是否置顶到笔记列表顶部。
+   * @why 置顶只影响列表排序，不改变笔记归属（不像 archived/trashed 那样切换视图），
+   *      因此单独建字段而不是复用现有标记；该值由 DbHelper 落库到 notes.is_pinned。
+   */
+  public boolean isPinned() {
+    return pinned;
+  }
+
+  public void setPinned(boolean pinned) {
+    this.pinned = pinned;
+  }
+
+  /**
    * 获取分类，并把 commons 模块的 BaseCategory 兜底转换为本模块 Category。
    * @why BaseNote 的 category 字段声明为 BaseCategory，直接强转可能失败；
    *      捕获 ClassCastException 后新建 Category 包装，保证上层拿到的始终是 Category 类型。
@@ -213,6 +231,12 @@ public class Note extends BaseNote implements Parcelable {
   @Override
   public void buildFromJson(String jsonNote) {
     super.buildFromJson(jsonNote);
+    // 父类 buildFromNote 只搬运 commons 里声明的字段，pinned 是本模块新增的，需单独解析回填：
+    // 备份文件由 Gson 序列化 Note 本身生成，其中已含 pinned；旧备份无此字段时 Gson 取默认 false
+    Note parsed = new Gson().fromJson(jsonNote, Note.class);
+    if (parsed != null) {
+      setPinned(parsed.isPinned());
+    }
     List<Attachment> attachments = new ArrayList<>();//新建本模块附件列表
     for (BaseAttachment attachment : getAttachmentsList()) {// 遍历父类反序列化出的通用附件
       attachments.add(new Attachment(attachment));// 逐个包装为本模块 Attachment
@@ -247,6 +271,7 @@ public class Note extends BaseNote implements Parcelable {
     parcel.writeParcelable(getCategory(), 0);//分类：Parcelable 嵌套写入
     parcel.writeInt(isLocked() ? 1 : 0);// 锁定标志（加密笔记）
     parcel.writeInt(isChecklist() ? 1 : 0);//清单标志
+    parcel.writeInt(isPinned() ? 1 : 0);//置顶标志
     parcel.writeList(getAttachmentsList());//附件列表（List 嵌套写入）
   }
 

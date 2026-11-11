@@ -16,7 +16,8 @@ CREATE
 		address TEXT,
 		category_id INTEGER DEFAULT null,
 		locked INTEGER,  
-		checklist  INTEGER
+		checklist  INTEGER,
+		is_pinned  INTEGER DEFAULT 0
 	);
 	
 
