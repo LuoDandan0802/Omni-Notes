@@ -124,6 +124,17 @@
         android:textAppearance="@style/Text.Small"
         android:alpha="0.6"
         pixlui:typeface="Roboto-Regular.ttf" />
+
+      <com.neopixl.pixlui.components.textview.TextView
+        android:id="@+id/note_word_count"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:layout_marginStart="8dp"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:alpha="0.6"
+        pixlui:typeface="Roboto-Regular.ttf" />
     </LinearLayout>
   </LinearLayout>
 

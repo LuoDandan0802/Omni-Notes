@@ -320,6 +320,19 @@ public class NoteAdapter extends RecyclerView.Adapter<NoteViewHolder> {
     initDates(note, holder);
     initThumbnail(note, holder);
     manageSelectionColor(position, note, holder);
+
+    com.neopixl.pixlui.components.textview.TextView wordCountView =
+        holder.itemView.findViewById(R.id.note_word_count);
+    if (wordCountView != null) {
+      String content = note.getContent();
+      if (!note.isChecklist()) {
+        int count = content == null ? 0 : content.replaceAll("\\s+", "").length();
+        wordCountView.setText("字数: " + count);
+      } else {
+        int total = content == null ? 0 : content.split("\n").length;
+        wordCountView.setText("清单项: " + total);
+      }
+    }
   }
 
   @Override

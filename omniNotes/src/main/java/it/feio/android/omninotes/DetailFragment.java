@@ -261,6 +261,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
    * 当用户在“纯文本”和“清单”模式间来回切换时，它还能记住勾选状态，防止数据丢失。
    */
   private ChecklistManager mChecklistManager;
+  private com.neopixl.pixlui.components.textview.TextView statisticsTextView;
   // Values to print result
   private String exitMessage;
   /**
@@ -806,6 +807,9 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     if (binding.lastModification.getText().length() == 0) {
       binding.lastModification.setVisibility(View.GONE);
     }
+
+    statisticsTextView = binding.statisticsText;
+    updateStatistics();
   }
   /**
    * @description 初始化并管理便签的“时间提醒（闹钟）”功能。
@@ -2376,6 +2380,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   @Override
   public void onTextChanged(CharSequence s, int start, int before, int count) {
     scrollContent();
+    updateStatistics();
   }
 
   @Override
@@ -2391,6 +2396,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
   @Override
   public void onCheckListChanged() {
     scrollContent();
+    updateStatistics();
   }
 
   private void scrollContent() {
@@ -2404,6 +2410,19 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
         binding.contentWrapper.scrollBy(0, 60);
       }
       contentLineCounter = binding.fragmentDetailContent.detailContent.getLineCount();
+    }
+  }
+
+  private void updateStatistics() {
+    if (statisticsTextView == null) return;
+    if (!noteTmp.isChecklist()) {
+      String content = getNoteContent();
+      int wordCount = content == null ? 0 : content.replaceAll("\\s+", "").length();
+      statisticsTextView.setText("字数: " + wordCount);
+    } else if (mChecklistManager != null) {
+      int total = mChecklistManager.getCount();
+      int checked = mChecklistManager.getCheckedCount();
+      statisticsTextView.setText("已完成: " + checked + " / " + total);
     }
   }
 
