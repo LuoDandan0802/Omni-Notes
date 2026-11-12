@@ -41,6 +41,7 @@ public class NoteViewHolder extends ViewHolder {
   public ImageView locationIcon;
   public ImageView alarmIcon;
   public ImageView lockedIcon;
+  public ImageView pinnedIcon;
   @Nullable
   public ImageView attachmentIcon;
   @Nullable
@@ -62,6 +63,7 @@ public class NoteViewHolder extends ViewHolder {
       alarmIcon = binding.alarmIcon;
       lockedIcon = binding.lockedIcon;
       attachmentThumbnail = binding.attachmentThumbnail;
+      pinnedIcon = binding.pinnedIcon;
       lockedIcon = binding.lockedIcon;
       lockedIcon = binding.lockedIcon;
     } else {
@@ -77,6 +79,7 @@ public class NoteViewHolder extends ViewHolder {
       alarmIcon = binding.alarmIcon;
       lockedIcon = binding.lockedIcon;
       attachmentIcon = binding.attachmentIcon;
+      pinnedIcon = binding.pinnedIcon;
       lockedIcon = binding.lockedIcon;
       lockedIcon = binding.lockedIcon;
     }

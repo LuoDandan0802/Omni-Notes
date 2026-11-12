@@ -93,6 +93,18 @@
     android:visible="false"
     app:showAsAction="ifRoom" />
   <item
+    android:id="@+id/menu_pin_to_top"
+    android:orderInCategory="760"
+    android:title="@string/pin_to_top"
+    android:visible="false"
+    app:showAsAction="ifRoom" />
+  <item
+    android:id="@+id/menu_unpin_from_top"
+    android:orderInCategory="770"
+    android:title="@string/unpin_from_top"
+    android:visible="false"
+    app:showAsAction="ifRoom" />
+  <item
     android:id="@+id/menu_archive"
     android:icon="@drawable/ic_archive_black_48dp"
     android:orderInCategory="800"

@@ -525,6 +525,19 @@ public class DbHelper extends SQLiteOpenHelper {
 
 
   /**
+   * 生成笔记列表的排序子句。
+   * @why 置顶优先必须写进 SQL 而不是取出后在内存里重排：首页、归档、回收站、标签与关键字搜索
+   *      都复用 getNotes 这一条查询，只有把 is_pinned DESC 放进 ORDER BY 各入口顺序才一致；
+   *      单独抽成方法是为了让单元测试直接拿到这段 SQL，用内存数据库验证真实排序语义。
+   * @param sortColumn 用户选择的排序列（标题序传入 title||content）
+   * @param sortOrder  排序方向（ASC 或 DESC）
+   * @return 以空格开头的 ORDER BY 子句
+   */
+  static String buildNotesOrderBy(String sortColumn, String sortOrder) {
+    return " ORDER BY " + KEY_PINNED + " DESC, " + sortColumn + " COLLATE NOCASE " + sortOrder;
+  }
+
+  /**
    * Common method for notes retrieval. It accepts a query to perform and returns matching records.
    * （笔记检索的通用方法。该方法接收一条查询指令并返回匹配的记录。）
    * 通用笔记查询核心方法：按传入的 where 条件与排序方向执行查询并解析游标。
@@ -587,7 +600,7 @@ public class DbHelper extends SQLiteOpenHelper {
         + " LEFT JOIN " + TABLE_CATEGORY + " USING( " + KEY_CATEGORY + ") "
         + whereCondition
         //置顶优先：先按 is_pinned 降序把置顶笔记整体提到前面，再按用户选择的列排序
-        + (order ? " ORDER BY " + KEY_PINNED + " DESC, " + sortColumn + " COLLATE NOCASE " + sortOrder : "");
+        + (order ? buildNotesOrderBy(sortColumn, sortOrder) : "");
 
     LogDelegate.v("Query: " + query);
 

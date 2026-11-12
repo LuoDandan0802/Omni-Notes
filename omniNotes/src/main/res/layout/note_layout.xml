@@ -104,6 +104,15 @@
           android:src="@drawable/ic_lock_black_24dp"
           android:alpha="0.6"
           android:visibility="gone" />
+
+        <ImageView
+          android:id="@+id/pinnedIcon"
+          android:layout_width="15dp"
+          android:layout_height="15dp"
+          android:layout_gravity="top|end"
+          android:src="@drawable/ic_push_pin_black_18dp"
+          android:alpha="0.6"
+          android:visibility="gone" />
       </LinearLayout>
 
       <com.neopixl.pixlui.components.textview.TextView

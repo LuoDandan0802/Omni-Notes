@@ -158,8 +158,10 @@
     <string name="add_shortcut">添加快捷方式</string>
     <string name="shortcut_added">快捷方式已添加到桌面</string>
     <string name="shortcut_disabled">快捷方式不再有效</string>
-    <string name="pin_note">置顶笔记</string>
-    <string name="pined_note">已置顶的便笺为通知</string>
+    <string name="pin_note">在通知栏置顶</string>
+    <string name="pin_to_top">置顶笔记</string>
+    <string name="unpin_from_top">取消置顶</string>
+    <string name="pined_note">已在通知栏置顶</string>
     <string name="shortcut_note_deleted">快捷方式指向的记事已删除</string>
     <string name="widget_simple_description">带按钮的简单小部件</string>
     <string name="widget_list_description">带按钮的可滚动列表小部件</string>

@@ -126,6 +126,8 @@ public class NoteAdapter extends RecyclerView.Adapter<NoteViewHolder> {
     holder.alarmIcon.setVisibility(note.getAlarm() != null ? View.VISIBLE : View.GONE);
     // ...the locked with password state
     holder.lockedIcon.setVisibility(note.isLocked() ? View.VISIBLE : View.GONE);
+    // ...the pinned-to-top state
+    holder.pinnedIcon.setVisibility(note.isPinned() ? View.VISIBLE : View.GONE);
     // ...the attachment icon for contracted view
     if (!expandedView) {
       holder.attachmentIcon

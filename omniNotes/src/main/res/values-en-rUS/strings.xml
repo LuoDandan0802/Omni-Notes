@@ -158,8 +158,8 @@
     <string name="add_shortcut">Add shortcut</string>
     <string name="shortcut_added">Shortcut added to home screen</string>
     <string name="shortcut_disabled">Shortcut not valid anymore</string>
-    <string name="pin_note">Pin note</string>
-    <string name="pined_note">Pinned note as notification</string>
+    <string name="pin_note">Pin to notification bar</string>
+    <string name="pined_note">Pinned to notification bar</string>
     <string name="shortcut_note_deleted">Shortcut points to deleted note</string>
     <string name="widget_simple_description">Simple widget with buttons</string>
     <string name="widget_list_description">Scrolling list widget with buttons</string>

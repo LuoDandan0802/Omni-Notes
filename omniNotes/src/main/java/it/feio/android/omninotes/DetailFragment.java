@@ -1271,6 +1271,8 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       // Temporary removed until fixed on Oreo and following
       menu.findItem(R.id.menu_add_shortcut).setVisible(!newNote);
       menu.findItem(R.id.menu_pin_note).setVisible(!newNote);
+      menu.findItem(R.id.menu_pin_to_top).setVisible(!newNote && !noteTmp.isPinned());
+      menu.findItem(R.id.menu_unpin_from_top).setVisible(!newNote && noteTmp.isPinned());
       menu.findItem(R.id.menu_archive).setVisible(!newNote && !noteTmp.isArchived());
       menu.findItem(R.id.menu_unarchive).setVisible(!newNote && noteTmp.isArchived());
       menu.findItem(R.id.menu_trash).setVisible(!newNote);
@@ -1376,6 +1378,14 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       case R.id.menu_pin_note:
         // 路由至：将便签固定为常驻通知栏
         pinNote();
+        break;
+      case R.id.menu_pin_to_top:
+        // 路由至：把笔记固定到笔记列表顶部
+        togglePinned(true);
+        break;
+      case R.id.menu_unpin_from_top:
+        // 路由至：解除列表置顶
+        togglePinned(false);
         break;
       case R.id.menu_add_shortcut:
         // 路由至：在桌面添加快捷方式
@@ -2217,6 +2227,30 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       });
       v.startAnimation(mAnimation);
     }
+  }
+
+  /**
+   * 置顶 / 取消置顶笔记。
+   * @why 不走 updateNote 整行覆写：全字段保存会重算 last_modification、重扫附件、
+   *      对锁定笔记重新加密，只是切换置顶不应刷新排序时间；
+   *      又必须同步 noteOriginal，否则退出编辑页时 SaveNoteTask 会用旧值
+   *      把库里的 is_pinned 覆盖回 0，等于置顶白做。
+   * @param pinned true 表示固定到列表顶部，false 表示取消固定
+   */
+  private void togglePinned(boolean pinned) {
+    if (noteTmp.get_id() == null) {
+      return;
+    }
+    noteTmp.setPinned(pinned);
+    if (noteOriginal != null) {
+      noteOriginal.setPinned(pinned);
+    }
+    DbHelper.getInstance().setPinned(noteTmp, pinned);
+    // 复用列表的重载开关：ListFragment.onResume 检测到后会重新查库，置顶笔记回到顶部
+    mainActivity.prefsChanged = true;
+    mainActivity.invalidateOptionsMenu();
+    mainActivity.showToast(
+        getText(pinned ? R.string.pin_to_top : R.string.unpin_from_top), Toast.LENGTH_SHORT);
   }
 
   /**
