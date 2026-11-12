@@ -1263,6 +1263,8 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
     menu.findItem(R.id.menu_checklist_off).setVisible(noteTmp.isChecklist());
     menu.findItem(R.id.menu_checklist_moveToBottom)
         .setVisible(noteTmp.isChecklist() && mChecklistManager.getCheckedCount() > 0);
+    menu.findItem(R.id.menu_clear_checked)
+        .setVisible(noteTmp.isChecklist() && mChecklistManager.getCheckedCount() > 0);
     menu.findItem(R.id.menu_lock).setVisible(!noteTmp.isLocked());
     menu.findItem(R.id.menu_unlock).setVisible(noteTmp.isLocked());
     // If note is trashed only this options will be available from menu
@@ -1370,6 +1372,9 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
       case R.id.menu_checklist_moveToBottom:
         // 路由至：将已勾选的待办项移动到底部
         moveCheckedItemsToBottom();
+        break;
+      case R.id.menu_clear_checked:
+        clearCheckedItems();
         break;
       case R.id.menu_lock:
       case R.id.menu_unlock:
@@ -2628,5 +2633,33 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
         attachmentDialog.dismiss();
       }
     }
+  }
+
+  private void clearCheckedItems() {
+    String content = getNoteContent();
+    if (TextUtils.isEmpty(content)) {
+      return;
+    }
+    String filteredContent = filterCheckedLines(content);
+    noteTmp.setContent(filteredContent);
+    android.widget.EditText et = (android.widget.EditText) binding.fragmentDetailContent.detailContent;
+    if (et != null) {
+      et.setText(filteredContent);
+      try {
+        View newView = mChecklistManager.convert(et);
+        mChecklistManager.replaceViews(toggleChecklistView, newView);
+        toggleChecklistView = newView;
+      } catch (ViewNotSupportedException e) {
+        LogDelegate.e("Error refreshing checklist", e);
+      }
+    }
+    mainActivity.showMessage("已清空完成项", ONStyle.CONFIRM);
+  }
+
+  private String filterCheckedLines(String content) {
+    String checkedSym = it.feio.android.checklistview.interfaces.Constants.CHECKED_SYM;
+    return Arrays.stream(content.split("\n"))
+        .filter(line -> !line.startsWith(checkedSym))
+        .collect(Collectors.joining("\n"));
   }
 }
