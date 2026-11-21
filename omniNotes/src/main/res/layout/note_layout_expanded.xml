@@ -121,6 +121,14 @@
           android:layout_gravity="bottom|end"
           android:src="@drawable/ic_lock_black_24dp"
           android:visibility="gone" />
+
+        <ImageView
+          android:id="@+id/pinnedIcon"
+          android:layout_width="15dp"
+          android:layout_height="15dp"
+          android:layout_gravity="bottom|end"
+          android:src="@drawable/ic_push_pin_black_18dp"
+          android:visibility="gone" />
       </LinearLayout>
     </LinearLayout>
 
