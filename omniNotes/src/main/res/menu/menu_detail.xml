@@ -67,6 +67,12 @@
     android:visible="false"
     app:showAsAction="ifRoom" />
   <item
+    android:id="@+id/menu_clear_checked"
+    android:orderInCategory="560"
+    android:title="清空已完成"
+    android:visible="false"
+    app:showAsAction="ifRoom" />
+  <item
     android:id="@+id/menu_lock"
     android:icon="@drawable/ic_lock_black_24dp"
     android:orderInCategory="600"
